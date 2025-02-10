@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "eth"
+version = "0.1.0"
+description = ""
+authors = ["Po <chenjunfeng@ethstorage.io>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+py-ecc = "^7.0.1"
+py-arkworks-bls12381 = "^0.3.8"
+milagro-bls-binding = "^1.9.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
