@@ -1,0 +1,40 @@
+pragma solidity ^0.8.9;
+
+contract Calculator {
+    uint public x = 20;
+    uint public y = 20;
+
+    function getSum() public view returns (uint256) {
+        return x + y;
+    }
+}
+
+contract Caller {
+    Calculator calculator;
+
+    constructor(address _calc) {
+        calculator = Calculator(_calc);
+    }
+
+    // call the getSum function in the calculator contract
+    function callCalculator() public view returns (uint sum) {
+        sum = calculator.getSum();
+    }
+}
+
+/* 
+# start anvil
+anvil -p 6500
+# create contracts(CA)
+forge create src/Accesslist.sol:Calculator --rpc-url $L1 --private-key $PK
+forge create src/Accesslist.sol:Caller  --constructor-args "CA" --rpc-url $L1 --private-key $PK 
+
+# get access list
+cast access-list CallerCA "callCalculator()" --rpc-url $L1
+# gas: 30711
+cast send '[{"address": "CA", "storageKeys":["0x0000000000000000000
+000000000000000000000000000000000000000000000","0x0000000000000000000000000000000000000000000000000000000000000001"]}]'  CallerCA "callCalculator()" --rpc-url $L1 --private-key $PK 
+# gas: 30411
+cast send --access-list '[{"address": "CA", "storageKeys":["0x0000000000000000000
+000000000000000000000000000000000000000000000","0x0000000000000000000000000000000000000000000000000000000000000001"]}]'  CA "callCalculator()" --rpc-url $L1 --private-key $PK 
+*/
