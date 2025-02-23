@@ -19,6 +19,7 @@ contract Caller {
     // call the getSum function in the calculator contract
     function callCalculator() public view returns (uint sum) {
         sum = calculator.getSum();
+        sum = calculator.getSum();
     }
 }
 
@@ -27,7 +28,7 @@ contract Caller {
 anvil -p 6500
 # create contracts(CA)
 forge create src/Accesslist.sol:Calculator --rpc-url $L1 --private-key $PK
-forge create src/Accesslist.sol:Caller  --constructor-args "CA" --rpc-url $L1 --private-key $PK 
+forge create src/Accesslist.sol:Caller --constructor-args "0x5FbDB2315678afecb367f032d93F642f64180aa3" --rpc-url $L1 --private-key $PK 
 
 # get access list
 cast access-list CallerCA "callCalculator()" --rpc-url $L1
