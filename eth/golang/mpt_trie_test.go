@@ -1,5 +1,10 @@
 // Here nibbles are not used to represent the key, the key is simply a string of hex characters.
 // so odd/even encoded path is not considered.
+
+/*
+refs: https://github.com/Blockchain-for-Developers/merkle-patricia-trie/blob/master/src/trie.py#L300
+*/
+
 package main
 
 import (
