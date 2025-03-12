@@ -1,4 +1,4 @@
-# How staged-sync works?
+# How staged-sync works (erigon)?
 
 **Why not use a pipeline?**  
 - **Decomposition** enables each stage to be profiled and optimized independently.  
@@ -18,3 +18,10 @@ After these optimizations, the wall time was roughly distributed as follows:
 - [Staged Sync and short history of Silkworm project](https://erigon.substack.com/p/staged-sync-and-short-history-of)
 - [Towards the first release of Turbo-geth(now erigon)](https://ledgerwatch.github.io/turbo_geth_release.html)
 - [erigon how staged sync works](https://github.com/bobanetwork/op-erigon-interfaces/blob/boba-develop/_docs/staged-sync.md)
+
+# Reth stage sync
+- build_networked_pipeline
+- create_provider_factory 可以看出不同stage之间的数据传递是介于database and static files之间的，并没有直接使用内存传递。可能是便于unwind? (否则还需要内存unwind)
+
+## 关于unwind
+- 共用了一个tx context
