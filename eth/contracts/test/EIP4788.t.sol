@@ -8,25 +8,28 @@ import "../src/Contract.sol";
 address constant addr = 0x000000000000000000000000000000000000000b;
 address constant sysaddr = 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
 uint256 constant rootmod = 98304;
-bytes32 constant root    = hex"88e96d4537bea4d9c05d12549907b32561d3bf31f45aae734cdc119f13406cb6";
+bytes32 constant root = hex"88e96d4537bea4d9c05d12549907b32561d3bf31f45aae734cdc119f13406cb6";
 
 function timestamp() view returns (bytes32) {
-        return bytes32(uint256(block.timestamp));
+    return bytes32(uint256(block.timestamp));
 }
 
 function timestamp_idx() view returns (bytes32) {
-        return bytes32(uint256(block.timestamp % rootmod));
+    return bytes32(uint256(block.timestamp % rootmod));
 }
 
 function root_idx() view returns (bytes32) {
-        return bytes32(uint256(block.timestamp % rootmod + rootmod));
+    return bytes32(uint256(block.timestamp % rootmod + rootmod));
 }
 
 contract ContractTest is Test {
     address unit;
 
     function setUp() public {
-        vm.etch(addr, hex"3373fffffffffffffffffffffffffffffffffffffffe14604457602036146024575f5ffd5b620180005f350680545f35146037575f5ffd5b6201800001545f5260205ff35b6201800042064281555f359062018000015500");
+        vm.etch(
+            addr,
+            hex"3373fffffffffffffffffffffffffffffffffffffffe14604457602036146024575f5ffd5b620180005f350680545f35146037575f5ffd5b6201800001545f5260205ff35b6201800042064281555f359062018000015500"
+        );
         unit = addr;
     }
 
@@ -75,17 +78,17 @@ contract ContractTest is Test {
         vm.store(unit, root_idx(), root);
 
         // Wrap around rootmod once forward.
-        (bool ret, bytes memory data) = unit.call(bytes.concat(bytes32(time+rootmod)));
+        (bool ret, bytes memory data) = unit.call(bytes.concat(bytes32(time + rootmod)));
         assertFalse(ret);
         assertEq(data, hex"");
 
         // Wrap around rootmod once backward.
-        (ret, data) = unit.call(bytes.concat(bytes32(time-rootmod)));
+        (ret, data) = unit.call(bytes.concat(bytes32(time - rootmod)));
         assertFalse(ret);
         assertEq(data, hex"");
 
         // Timestamp without any associated root.
-        (ret, data) = unit.call(bytes.concat(bytes32(time+1)));
+        (ret, data) = unit.call(bytes.concat(bytes32(time + 1)));
         assertFalse(ret);
         assertEq(data, hex"");
     }
@@ -112,7 +115,7 @@ contract ContractTest is Test {
     // values.
     function testRingBuffers() public {
         for (uint256 i = 0; i < 10000; i += 1) {
-            bytes32 pbbr = bytes32(i*1337);
+            bytes32 pbbr = bytes32(i * 1337);
 
             // Simulate pre-block call to set root.
             vm.prank(sysaddr);
@@ -131,7 +134,6 @@ contract ContractTest is Test {
         }
     }
 
-
     // testHistoricalReads verifies that it is possible to read all previously
     // saved values in the beacon root contract.
     function testHistoricalReads() public {
@@ -139,7 +141,7 @@ contract ContractTest is Test {
 
         // Saturate storage with fake roots.
         for (uint256 i = 0; i < 8192; i += 1) {
-            bytes32 pbbr = bytes32(i*1337);
+            bytes32 pbbr = bytes32(i * 1337);
             vm.prank(sysaddr);
             (bool ret, bytes memory data) = unit.call(bytes.concat(pbbr));
             assertTrue(ret);
@@ -149,10 +151,10 @@ contract ContractTest is Test {
 
         // Attempt to read all values in same block context.
         for (uint256 i = 0; i < 8192; i += 1) {
-            bytes32 time = bytes32(uint256(start+i*12));
+            bytes32 time = bytes32(uint256(start + i * 12));
             (bool ret, bytes memory got) = unit.call(bytes.concat(time));
             assertTrue(ret);
-            assertEq(got, bytes.concat(bytes32(i*1337)));
+            assertEq(got, bytes.concat(bytes32(i * 1337)));
         }
     }
 }

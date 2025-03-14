@@ -1,8 +1,8 @@
 pragma solidity ^0.8.9;
 
 contract Calculator {
-    uint public x = 20;
-    uint public y = 20;
+    uint256 public x = 20;
+    uint256 public y = 20;
 
     function getSum() public view returns (uint256) {
         return x + y;
@@ -17,7 +17,7 @@ contract Caller {
     }
 
     // call the getSum function in the calculator contract
-    function callCalculator() public view returns (uint sum) {
+    function callCalculator() public view returns (uint256 sum) {
         sum = calculator.getSum();
         sum = calculator.getSum();
     }
