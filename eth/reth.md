@@ -14,6 +14,15 @@ reth-bench new-payload-fcu --rpc-url http://localhost:7542 --from 21970999 --to 
 # reth 目录: /root/test_nodes/op-sepolia/reth
 
 
+## Access-list
+算了主网3万个块儿左右:
+```
+average addr count per block: 394.41480968858133
+average storagekeys count per block: 1406.8443598615918
+max addr count of a block: 2499
+max storagekeys of a block: 2943
+total txs: 4874075
+```
 
 ## [DB](https://github.com/paradigmxyz/reth/blob/main/docs/design/database.md)
 ```
