@@ -1,7 +1,6 @@
 // precompile: precompiles added in different fork: https://github.com/ethereum/go-ethereum/blob/master/core/vm/contracts.go#L120
 
 // SPDX-License-Identifier: UNLICENSED
-// ref: https://github.com/ralexstokes/4788asm/tree/main
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
