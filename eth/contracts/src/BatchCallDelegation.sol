@@ -1,53 +1,57 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-// 7702 delegation contract 
+// 7702 delegation contract
 contract BatchCallDelegation {
-  struct Call {
-    bytes data;
-    address to;
-    uint256 value;
-  }
- 
-  function execute(Call[] calldata calls) external payable {
-    for (uint256 i = 0; i < calls.length; i++) {
-      Call memory call = calls[i];
-      (bool success, ) = call.to.call{value: call.value}(call.data);
-      require(success, "call reverted");
+    uint256 public x;
+    bool initialized;
+
+    struct Call {
+        bytes data;
+        address to;
+        uint256 value;
     }
-  }
+
+    function execute(Call[] calldata calls) external payable {
+        require(msg.sender == addr(), "only self-call");
+        for (uint256 i = 0; i < calls.length; i++) {
+            Call memory call = calls[i];
+            (bool success,) = call.to.call{value: call.value}(call.data);
+            require(success, "call reverted");
+        }
+        x += 1;
+    }
+
+    function addr() public view returns (address) {
+        return address(this);
+    }
+
+    // EIP-7702 does not provide developers the opportunity to run initcode and set storage slots during delegation. To secure the account from an observer front-running the initialization of the delegation with an account they control, smart contract wallet developers must verify the initial calldata to the account for setup purposes be signed by the EOA’s key using ecrecover.
+    function initialize(bytes32 messageHash, bytes memory signature) public {
+        if (!initialized) {
+            // Extract r, s and v from the signature
+            bytes32 r;
+            bytes32 s;
+            uint8 v;
+            assembly {
+                r := mload(add(signature, 0x20))
+                s := mload(add(signature, 0x40))
+                v := byte(0, mload(add(signature, 0x60)))
+            }
+
+            // Recover the signer address
+            address signer = ecrecover(messageHash, v, r, s);
+            require(signer == address(this), "Invalid signer");
+
+            // Initialization logic here
+            initialized = true;
+        }
+    }
+
+    // caution: this function is vulnerable to transfer the money from the EOA contract
+    function transfer(address to) external {
+        require(address(this).balance >= 1 ether, "Insufficient balance");
+        (bool success,) = to.call{value: 1 ether}("");
+        require(success, "Transfer failed");
+    }
 }
-
-/*
-anvil --hardfork prague -p 6601
-
-ADDR=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-PK=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-SPONSOR_PK=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
-SPONSOR=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
-L1=http://localhost:6601
-
-# deploy delegation contract
-forge create src/BatchCallDelegation.sol:BatchCallDelegation --rpc-url $L1 --private-key $PK --broadcast
-CA=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
-// cast rpc anvil_setBalance $ADDR 0 -r $L1
-
-cast balance $ADDR -r $L1
-
-# sponsored by others
-nonce=$(cast nonce $ADDR -r $L1)
-cast send $(cast az) --private-key $SPONSOR_PK  --auth $(cast wallet sign-auth $CA --nonce $nonce --chain 31337 --private-key $PK) -r $L1
-# self sponsor, az
-cast send $(cast az) --private-key $SPONSOR_PK --auth $CA -r $L1  
-
-cast code $ADDR -r $L1
-
-# call Smart EOA
-R1=0xcb98643b8786950F0461f3B0edf99D88F274574D
-R2=0xd2135CfB216b74109775236E36d4b433F1DF507B
-cast balance $ADDR -r $L1
-cast send $ADDR "execute((bytes,address,uint256)[] calldata calls)" "[(0x,$R1,10000),(0x,$R2,10000)]" --private-key $PK  -r $L1
-cast balance $R1 -r $L1
-cast balance $R2 -r $L1
-cast balance $ADDR -r $L1
-*/

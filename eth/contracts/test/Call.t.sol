@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import "forge-std/Test.sol";
 
 contract Caller {
-    // The name of the variable doesn’t matter, but where it is located in storage. 
+    // The name of the variable doesn’t matter, but where it is located in storage.
     uint256 public xx;
     address public callee;
 
