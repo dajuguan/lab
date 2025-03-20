@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 // ref: https://github.com/ralexstokes/4788asm/tree/main
+// evm_version = "shanghai"
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
