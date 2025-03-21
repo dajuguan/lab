@@ -1,3 +1,4 @@
+# create access list for each transaction in a block
 from web3 import Web3
 
 # Connect to an Ethereum node (use Infura, Alchemy, or local)
@@ -21,35 +22,33 @@ def count_access_list(tx_hash, curr_base_fee):
         params = {
         "from": tx["from"],
         "to": tx["to"],
-        "gas": tx["gas"],
-        # "gasPrice": hex(tx["gasPrice"]),
+        # "gas": tx["gas"],
         "value": hex(tx["value"]),
         "data": tx["input"],
-        "maxFeePerGas": tx["maxFeePerGas"],
-        "maxPriorityFeePerGas": tx["maxPriorityFeePerGas"],
+        # "maxFeePerGas": tx["maxFeePerGas"],
+        # "maxPriorityFeePerGas": tx["maxPriorityFeePerGas"],
         }
     else:
         params = {
         "from": tx["from"],
         "to": tx["to"],
-        "gas": hex(tx["gas"]),
-        "gasPrice": tx["gasPrice"],
+        # should use gasLmit not gas, or it throws intrinsic gas too low
+        # "gas": hex(tx["gas"]),
+        # "gasPrice": tx["gasPrice"],
         "value": hex(tx["value"]),
         "data": tx["input"],
-        # "maxFeePerGas": hex(tx["maxFeePerGas"]),
-        # "maxPriorityFeePerGas": hex(tx["maxPriorityFeePerGas"]),
         }
     
-    if  hasattr(tx, "maxFeePerGas") and (int(tx['gas']) != 21000):
-        params['maxFeePerGas'] = max(params['maxFeePerGas'], curr_base_fee)
-    else:
-        params['gasPrice'] = max(params['gasPrice'], curr_base_fee)
+    # if  hasattr(tx, "maxFeePerGas") and (int(tx['gas']) != 21000):
+    #     params['maxFeePerGas'] = max(params['maxFeePerGas'], curr_base_fee)
+    # else:
+    #     params['gasPrice'] = max(params['gasPrice'], curr_base_fee)
 
     resp = w3.provider.make_request("eth_createAccessList", [params, hex(block_number-1)])
     if "error" in resp:
         # print("txhash:", tx_hash)
-        # print("tx:", tx)
-        # print("error:", resp['error'])
+        print("tx:", tx)
+        print("error:", resp['error'])
         global skiped_tx
         skiped_tx += 1
         return 0, 0
@@ -68,7 +67,7 @@ max_addr_count, max_storagekeys_count = 0, 0
 txs_count = 0
 
 # block_start = 16000000
-block_start = 21000000
+block_start = 22028158
 block_end = 22028900
 
 (_,curr_base_fee) = tx_hashs = fetch_block_tx_hashs(block_start - 1)
