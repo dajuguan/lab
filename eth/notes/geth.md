@@ -1,5 +1,8 @@
 ## DB
 - 核心代码在[insertChain](https://github.com/ethereum/go-ethereum/blob/e6f3ce7b168b8f346de621a8f60d2fa57c2ebfb0/core/blockchain.go#L1609)
+    - bc.processBlock(block, statedb, start, setHead)
+        - bc.processor.Process(block, statedb, bc.vmConfig)
+        - [EVM processor](https://github.com/ethereum/go-ethereum/blob/67a3b087951a3f3a8e341ae32b6ec18f3553e5cc/core/state_processor.go#L57)
 
 [以太坊的数据结构](https://s1na.substack.com/p/the-tale-of-5-dbs-24-07-26),主要包括5种DB:
 - ethdb: 定义了持久层的接口和leveldb/pebbledb/memorydb/remotedb对其接口的具体实现
@@ -10,6 +13,7 @@
     - 生命周期为一个区块
     - L2魔改EVM主要就是要修改statedb
 - rawdb: 可以看做KV数据的schema，他定义了实际的数据在DB中的key具体是如何定义的
+
 ```
 var CodePrefix = []byte("c") // CodePrefix + code hash -> account code
 
