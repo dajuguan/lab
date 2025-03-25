@@ -1,13 +1,19 @@
-## Dependencies
+## Live-sync benchmark
 - [samply](https://github.com/mstange/samply)
 
 ```sh
 # the merge 15,537,394
-# current 21971333
+# current 22119000
 reth stage unwind --datadir ./rethdb_full to-block 16000000 
 reth_maxperf=/root/test_nodes/op-sepolia/reth/target/maxperf/reth
-samply record -p 3001 $reth_maxperf node --metrics localhost:9001 --authrpc.jwtsecret ../jwt.hex
-reth-bench new-payload-fcu --rpc-url http://localhost:7542 --from 21970999 --to 21971331 --jwtsecret ../jwt.hex  --engine-rpc-url http://localhost:7552
+# samply record -p 3001 $reth_maxperf node --metrics localhost:9001 --authrpc.jwtsecret ../jwt.hex
+# start reth with --engine.caching-and-prewarming, then start reth-bench
+reth-bench new-payload-fcu --rpc-url http://localhost:7544 --from 21971329 --to 21973329 --jwtsecret ../jwt.hex  --engine-rpc-url http://localhost:7552 
+```
+
+### without livesync
+```
+Total Ggas/s: 0.0946 total_duration=3926.347488098s total_gas_used=371482827669 blocks_processed=20331
 ```
 
 > rpc-url 是另外一个同步到最新块的L1 EL节点RPC，不能自己调自己
@@ -51,7 +57,7 @@ total txs: 4874075
     - https://github.com/ava-labs/firewood 
     - https://docs.monad.xyz/monad-arch/execution/monaddb
     - https://sovereign.mirror.xyz/jfx_cJ_15saejG9ZuQWjnGnG-NfahbazQH98i1J3NN8
-
+- [State Root Calculation for Engine Payloads](https://github.com/paradigmxyz/reth/blob/main/crates/engine/tree/docs/root.md#revealing-example)
 
 涉及到的概念:
 - LSM(Log Structured-Merge Tree): 攒攒再写，所以写入会很快；但是读是log(N)的，因为没有索引
