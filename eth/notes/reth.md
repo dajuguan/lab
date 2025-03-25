@@ -85,3 +85,22 @@ total txs: 4874075
     - [insert_block](https://github.com/paradigmxyz/reth/blob/75ca54b79039a98701df82a9817cf869e92ef588/crates/engine/tree/src/tree/mod.rs#L922)
     - [use_caching_and_prewarming](https://github.com/paradigmxyz/reth/blob/75ca54b79039a98701df82a9817cf869e92ef588/crates/engine/tree/src/tree/mod.rs#L2474)
 - [advance_persistence](https://github.com/paradigmxyz/reth/blob/75ca54b79039a98701df82a9817cf869e92ef588/crates/engine/tree/src/tree/mod.rs#L797)
+
+
+
+# Reth optimization
+
+## [DB](https://www.youtube.com/watch?v=e9S1aPDfYgw)
+- compression keys
+- snapshot
+- flat storage
+- history & changesets
+- ACD transaction: mdbx db
+- write amplication: etl (extract, tranform, load)
+- Dupsort (remove 0s)
+## Histotical sync
+- pipeline
+## Live-sync
+- use_caching_and_prewarming
+- State Root Calculation for Engine Payloads
+    - [erigon ](https://github.com/erigontech/erigon/blob/main/docs/programmers_guide/guide.md)
