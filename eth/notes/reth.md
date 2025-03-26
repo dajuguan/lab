@@ -88,19 +88,25 @@ total txs: 4874075
 
 
 
-# Reth optimization
+# Reth perf optimization
 
-## [DB](https://www.youtube.com/watch?v=e9S1aPDfYgw)
-- compression keys
+## [DB](erigon: https://www.youtube.com/watch?v=e9S1aPDfYgw)
+- [reth DB design](https://github.com/paradigmxyz/reth/blob/2ba54bf1c1f38c7173838f37027315a09287c20a/docs/design/database.md)
+- [compression keys](crates/primitives-traits/src/storage.rs)
 - snapshot
 - flat storage
 - history & changesets
 - ACD transaction: mdbx db
-- write amplication: etl (extract, tranform, load)
-- Dupsort (remove 0s)
+- write amplication: [etl (extract, tranform, load)](https://github.com/paradigmxyz/reth/blob/cf095a7536d9a21a1c16cfb9dac2654a1889f1e8/crates/etl/src/lib.rs)
+- Dupsort (remove duplicate zeros)
+
 ## Histotical sync
-- pipeline
+- [stages](https://github.com/paradigmxyz/reth/blob/3f680fd6ccee1045e40a84917be35d5bd7c5b810/docs/crates/stages.md)
+- https://github.com/paradigmxyz/reth/blob/172369afd58b128fd0482dd0c385d9ccfc18f4fc/crates/stages/stages/src/sets.rs
+
 ## Live-sync
-- use_caching_and_prewarming
+- [use_caching_and_prewarming](https://github.com/paradigmxyz/reth/blob/75ca54b79039a98701df82a9817cf869e92ef588/crates/engine/tree/src/tree/mod.rs#L2474)
 - State Root Calculation for Engine Payloads
+    - [State Root Calculation for Engine Payloads](https://github.com/paradigmxyz/reth/blob/main/crates/engine/tree/docs/root.md#state-root-task)
+    - [Spawn state root task](https://github.com/paradigmxyz/reth/blob/75ca54b79039a98701df82a9817cf869e92ef588/crates/engine/tree/src/tree/mod.rs#L2443)
     - [erigon ](https://github.com/erigontech/erigon/blob/main/docs/programmers_guide/guide.md)
