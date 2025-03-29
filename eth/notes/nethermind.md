@@ -12,9 +12,26 @@
 --Init.StateDbKeyScheme Hash  HalfPath(default)
 --blocks-prewarmstateonblockprocessing false true(default)
 ```
+|              |halfpath+prewarm| halfpath| halfpath | hash|
+|---------     |----------------|---------|---------|---------|
+|Average MGas/s|	435.3 	    |181.8    |198.2 	 |134.8 |
+|speed up	   |prewarm only:	2.39 	  |	halfpath only:	1.47 |
+
+
+
+### benchmark
+```
+blockHash=
+curl localhost:7245   -X POST   -H "Content-Type: application/json"   --data '{
+    "jsonrpc": "2.0",
+    "id": 0,
+    "method": "debug_resetHead",
+    "params": ["'${blockHash}'"]
+}'
+```
 
 ## Notable releases
-- [v1.25.0->v1.26.0: 60 to 107](https://github.com/NethermindEth/nethermind/releases/tag/1.26.0)
+- [v1.25.0->v1.26.0: 68 to 107](https://github.com/NethermindEth/nethermind/releases/tag/1.26.0)
     - https://x.com/NethermindEth/status/1748338476561354774
     - [half-path](https://github.com/NethermindEth/nethermind/pull/6331)
     - [halfpath explained](https://medium.com/nethermind-eth/nethermind-client-3-experimental-approaches-to-state-database-change-8498e3d89771)
