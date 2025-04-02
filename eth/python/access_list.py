@@ -2,7 +2,7 @@
 from web3 import Web3
 import json
 # Connect to an Ethereum node (use Infura, Alchemy, or local)
-RPC_URL = json.load(open(".env"))["RPC_URL"]
+RPC_URL = json.load(open("../.env"))["RPC_URL"]
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
 
@@ -43,11 +43,12 @@ def get_tx_access_list(tx_hash):
     return acl,addr_count ,storagekeys_count
 
 total_addr_count, total_storagekeys_count = 0, 0
-max_addr_count, max_storagekeys_count = 0, 0
+max_addr_in_block, max_storagekeys_in_block = 0, 0
+max_size_in_block = 0
 txs_count = 0
 
 # block_start = 16000000
-block_start = 22028158
+block_start = 22028155
 block_end = 22028159
 
 
@@ -56,21 +57,30 @@ for block_number in range(block_start, block_end):
     tx_hashs, next_base_fee = fetch_block_tx_hashs(block_number)
     txs_count += len(tx_hashs)
     acls = []
+    size_in_block = 0
+    storagekeys_in_block = 0
+    addr_in_block = 0
     for h in tx_hashs:
         (acl, addr_count, storagekeys_count) = get_tx_access_list(h)
         total_addr_count += addr_count
         total_storagekeys_count += storagekeys_count
-        max_addr_count = max(max_addr_count, addr_count)
-        max_storagekeys_count = max(max_storagekeys_count, storagekeys_count)
 
+        size_in_block += addr_count * 20 + storagekeys_count * 32
+        addr_in_block += addr_count
+        storagekeys_in_block += storagekeys_count
         acls.extend(acl)
-    
-    block_acls[block_number] = acls
 
-json.dump(block_acls, open("block_acls.json", "w"), indent=4)
+    if size_in_block > max_size_in_block:
+        max_size_in_block = size_in_block
+        max_addr_in_block = addr_in_block
+        max_storagekeys_in_block = storagekeys_in_block
+
+    # block_acls[block_number] = acls
+
+# json.dump(block_acls, open("block_acls.json", "w"), indent=4)
 
 print(f"average addr count: {total_addr_count/(block_end-block_start)}")   
 print(f"average storagekeys count: {total_storagekeys_count/(block_end-block_start)}")
-print(f"max addr count in a tx: {max_addr_count}")
-print(f"max storagekeys count in a tx: {max_storagekeys_count}")
+print(f"max addr count in a tx: {max_addr_in_block}")
+print(f"max storagekeys count in a tx: {max_storagekeys_in_block}")
 print("total txs:", txs_count)
