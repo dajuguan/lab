@@ -20,6 +20,7 @@ type Config struct {
 }
 
 type Block struct {
+	// must be capitalized
 	Number string   `json:"number"`
 	Hashes []string `json:"transactions"`
 }
