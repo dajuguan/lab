@@ -5,7 +5,6 @@ import json
 RPC_URL = json.load(open("../.env"))["RPC_URL"]
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
-
 """ 
 curl localhost:7145 -X POST -H "Content-Type: application/json" -d '{ "jsonrpc": "2.0", "id": 0, "method": "trace_replayTransaction", "params": ["0x53d1bd19c96660f9f71377b7d66fb8d2d51442213168c236b41d9be4437691cc", ["Trace","StateDiff", "VmTrace"]] }' > log.json
 
@@ -48,8 +47,8 @@ max_size_in_block = 0
 txs_count = 0
 
 # block_start = 16000000
-block_start = 22028155
-block_end = 22028159
+block_start = 21973379
+block_end = 21973380
 
 
 block_acls = {}
@@ -62,22 +61,35 @@ for block_number in range(block_start, block_end):
     addr_in_block = 0
     for h in tx_hashs:
         (acl, addr_count, storagekeys_count) = get_tx_access_list(h)
-        total_addr_count += addr_count
-        total_storagekeys_count += storagekeys_count
 
-        size_in_block += addr_count * 20 + storagekeys_count * 32
-        addr_in_block += addr_count
+        for i, item in enumerate(acl):
+             # Check if the address already exists in acl
+            entry = next((entry for entry in acls if entry['address'] == item['address']), None)
+            if entry:
+                prev = len(entry['storageKeys']) + len(item['storageKeys'])
+                entry['storageKeys'] = (list(set(item['storageKeys'] + entry['storageKeys'])))
+                storagekeys_count -= prev - len(entry['storageKeys'])
+            else:
+                acls.append(item)
+        
         storagekeys_in_block += storagekeys_count
-        acls.extend(acl)
+    
+    addr_in_block = len(acls)
+    size_in_block += addr_in_block * 20 + storagekeys_in_block * 32
+
+    total_addr_count += addr_in_block
+    total_storagekeys_count += storagekeys_in_block
+    
 
     if size_in_block > max_size_in_block:
         max_size_in_block = size_in_block
         max_addr_in_block = addr_in_block
         max_storagekeys_in_block = storagekeys_in_block
 
-    # block_acls[block_number] = acls
+    acls.sort(key=lambda x: x['address'])
+    block_acls[block_number] = acls
 
-# json.dump(block_acls, open("block_acls.json", "w"), indent=4)
+json.dump(block_acls, open("block_acls.json", "w"), indent=4)
 
 print(f"average addr count: {total_addr_count/(block_end-block_start)}")   
 print(f"average storagekeys count: {total_storagekeys_count/(block_end-block_start)}")
