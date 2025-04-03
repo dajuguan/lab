@@ -66,9 +66,9 @@ for block_number in range(block_start, block_end):
              # Check if the address already exists in acl
             entry = next((entry for entry in acls if entry['address'] == item['address']), None)
             if entry:
-                prev = len(entry['storageKeys']) + len(item['storageKeys'])
-                entry['storageKeys'] = (list(set(item['storageKeys'] + entry['storageKeys'])))
-                storagekeys_count -= prev - len(entry['storageKeys'])
+                prev = len(entry['storage_keys']) + len(item['storage_keys'])
+                entry['storage_keys'] = (list(set(item['storage_keys'] + entry['storage_keys'])))
+                storagekeys_count -= prev - len(entry['storage_keys'])
             else:
                 acls.append(item)
         

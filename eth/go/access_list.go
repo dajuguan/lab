@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
+	"sort"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/rpc"
@@ -12,7 +14,7 @@ import (
 
 type AccessList struct {
 	Address     string   `json:"address"`
-	StorageKeys []string `json:"storageKeys"`
+	StorageKeys []string `json:"storage_keys"`
 }
 
 type Config struct {
@@ -45,7 +47,7 @@ func fetchBlockTxHashes(client *rpc.Client, blockNumber int64) ([]string, error)
 	return block.Hashes, nil
 }
 
-func getTxAccessList(client *rpc.Client, txHash string) ([]AccessList, int, int, error) {
+func getTxAccessList(client *rpc.Client, txHash string) ([]AccessList, error) {
 	var result map[string]struct {
 		Storage map[string]interface{} `json:"storage"`
 	}
@@ -54,20 +56,47 @@ func getTxAccessList(client *rpc.Client, txHash string) ([]AccessList, int, int,
 		"tracerConfig": map[string]bool{"disableCode": true},
 	})
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, err
 	}
 
 	var acl []AccessList
-	storageKeysCount := 0
 	for addr, data := range result {
 		keys := []string{}
 		for key := range data.Storage {
 			keys = append(keys, key)
 		}
-		storageKeysCount += len(keys)
 		acl = append(acl, AccessList{Address: addr, StorageKeys: keys})
 	}
-	return acl, len(acl), storageKeysCount, nil
+	return acl, nil
+}
+
+func deduplicateAndSortAccessList(acl []AccessList) ([]AccessList, int, int) {
+	addressMap := make(map[string]map[string]struct{})
+	for _, entry := range acl {
+		if _, exists := addressMap[entry.Address]; !exists {
+			addressMap[entry.Address] = make(map[string]struct{})
+		}
+		for _, key := range entry.StorageKeys {
+			addressMap[entry.Address][key] = struct{}{}
+		}
+	}
+
+	var deduplicatedACL []AccessList
+	keysLen := 0
+	for addr, keysMap := range addressMap {
+		keys := make([]string, 0, len(keysMap))
+		for key := range keysMap {
+			keys = append(keys, key)
+		}
+		deduplicatedACL = append(deduplicatedACL, AccessList{Address: addr, StorageKeys: keys})
+		keysLen += len(keys)
+	}
+
+	sort.Slice(deduplicatedACL, func(i, j int) bool {
+		return deduplicatedACL[i].Address < deduplicatedACL[j].Address
+	})
+
+	return deduplicatedACL, len(deduplicatedACL), keysLen
 }
 
 func main() {
@@ -86,8 +115,8 @@ func main() {
 		log.Fatalf("Failed to connect to Ethereum node: %v", err)
 	}
 
-	blockStart := int64(22010000)
-	blockEnd := int64(22028159)
+	blockStart := int64(21973379)
+	blockEnd := int64(21973382)
 
 	var (
 		totalAddrCount, totalStorageKeysCount int
@@ -95,6 +124,8 @@ func main() {
 		maxSizeInBlock                        int
 		txsCount                              int
 	)
+
+	allACL := make(map[int64][]AccessList)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -107,41 +138,54 @@ func main() {
 		}
 		txsCount += len(txHashes)
 
-		sizeInBlock := 0
-		storageKeysInBlock := 0
-		addrInBlock := 0
-
 		for _, txHash := range txHashes {
 			wg.Add(1)
 			go func(txHash string) {
 				defer wg.Done()
-				_, addrCount, storageKeysCount, err := getTxAccessList(client, txHash)
+				acl, err := getTxAccessList(client, txHash)
 				if err != nil {
 					log.Printf("Failed to get access list for tx %s: %v", txHash, err)
 					return
 				}
-
 				mu.Lock()
-				totalAddrCount += addrCount
-				totalStorageKeysCount += storageKeysCount
-
-				sizeInBlock += addrCount*20 + storageKeysCount*32
-				addrInBlock += addrCount
-				storageKeysInBlock += storageKeysCount
+				allACL[blockNumber] = append(allACL[blockNumber], acl...)
 				mu.Unlock()
 			}(txHash)
 		}
 
 		wg.Wait()
+	}
 
-		mu.Lock()
+	var addrInBlock, keysInBlock, sizeInBlock int
+	// Deduplicate and sort allACL for each block
+	for blockNumber := blockStart; blockNumber < blockEnd; blockNumber++ {
+		allACL[blockNumber], addrInBlock, keysInBlock = deduplicateAndSortAccessList(allACL[blockNumber])
+
+		addrInBlock = len(allACL[blockNumber])
+		sizeInBlock = addrInBlock*20 + keysInBlock*32
 		if sizeInBlock > maxSizeInBlock {
 			maxSizeInBlock = sizeInBlock
 			maxAddrInBlock = addrInBlock
-			maxStorageKeysInBlock = storageKeysInBlock
+			maxStorageKeysInBlock = keysInBlock
 		}
-		mu.Unlock()
+		totalAddrCount += addrInBlock
+		totalStorageKeysCount += keysInBlock
 	}
+
+	// Save all access lists to a JSON file
+	file, err := os.Create("/root/now/lab/eth/python/block_acls.json")
+	if err != nil {
+		log.Fatalf("Failed to create JSON file: %v", err)
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(allACL); err != nil {
+		log.Fatalf("Failed to write JSON file: %v", err)
+	}
+
+	fmt.Println("Access lists saved to block_acls.json")
 
 	fmt.Printf("Average addr count: %d\n", int64(totalAddrCount)/(blockEnd-blockStart))
 	fmt.Printf("Average storage keys count: %d\n", int64(totalStorageKeysCount)/(blockEnd-blockStart))
