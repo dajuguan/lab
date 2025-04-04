@@ -116,7 +116,7 @@ func main() {
 	}
 
 	blockStart := int64(21973379)
-	blockEnd := int64(21973382)
+	blockEnd := int64(21973479)
 
 	var (
 		totalAddrCount, totalStorageKeysCount int
@@ -173,7 +173,7 @@ func main() {
 	}
 
 	// Save all access lists to a JSON file
-	file, err := os.Create("/root/now/lab/eth/python/block_acls.json")
+	file, err := os.Create("/root/now/lab/eth/python/block_acls.json_")
 	if err != nil {
 		log.Fatalf("Failed to create JSON file: %v", err)
 	}
@@ -185,7 +185,7 @@ func main() {
 		log.Fatalf("Failed to write JSON file: %v", err)
 	}
 
-	fmt.Println("Access lists saved to block_acls.json")
+	fmt.Println("Access lists saved to block_acls.json_")
 
 	fmt.Printf("Average addr count: %d\n", int64(totalAddrCount)/(blockEnd-blockStart))
 	fmt.Printf("Average storage keys count: %d\n", int64(totalStorageKeysCount)/(blockEnd-blockStart))
