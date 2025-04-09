@@ -116,7 +116,7 @@ func main() {
 	}
 
 	blockStart := int64(21973379)
-	blockEnd := int64(21973479)
+	blockEnd := int64(21974379)
 
 	var (
 		totalAddrCount, totalStorageKeysCount int
