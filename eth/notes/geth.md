@@ -36,3 +36,18 @@ func ReadCodeWithPrefix(db ethdb.KeyValueReader, hash common.Hash) []byte {
     - hashdb实际上存的是hash=> value，所以实际上不同合约地址如果存储相同的storage，那么他们有可能会引用相同的key及相应的数据(即使他们的contract地址不一样!，因为不是按照前缀地址存储数据的)，这样导致不好删除数据，即使一个合约destroy了，他内部的hash对应的数据可能被其他合约引用，导致没法直接删除，所以即使是full node也可能会保存不需要的过期数据(比如hash对应的parent root已经被gc了)
     - pathdb则在具体的合约上加了contract address前缀，这样不同的合约确保不会引用相同的hash对应的数据，更容易prune，所以在内存和实际数据库中(fullnode)只需要维护一个trie即可
     - 因此pathdb没法做archive node，因为他需要维护所有的增量数据，这个成本很高
+
+
+## rewind and import chain
+stop CL first
+```
+# set maxPeers = 1, and use trusted peer
+geth export --datadir ./geth_full/ dump.dat start+1 end
+
+geth attach ./geth_full/geth.ipc
+debug.setHead("hex(start)")  
+for ( p of admin.peers) {admin.removePeer(p.enode)}; console.log(admin.peers.length)
+
+# 和engine API一样，核心都是调用的insertChain，不过需要确认的是engine API里调用的block.Hash的时间占用
+geth import --datadir ./geth_full/ dump.dat
+```
