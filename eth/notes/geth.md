@@ -42,10 +42,12 @@ func ReadCodeWithPrefix(db ethdb.KeyValueReader, hash common.Hash) []byte {
 stop CL first
 ```
 # set maxPeers = 1, and use trusted peer
-geth export --datadir ./geth_full/ dump.dat start+1 end
+rm dump.dat (每次export之后的数据是追加的，因此需要先remove掉)
+geth export --nocompaction  --cache.noprefetch --datadir ./geth_full/ dump.dat start+1 end 
 
 geth attach ./geth_full/geth.ipc
-debug.setHead("hex(start)")  
+num=10344500
+debug.setHead('0x'+(num).toString(16))  # hex formated blocknumber with ""
 for ( p of admin.peers) {admin.removePeer(p.enode)}; console.log(admin.peers.length)
 
 # 和engine API一样，核心都是调用的insertChain，不过需要确认的是engine API里调用的block.Hash的时间占用
