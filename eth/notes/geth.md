@@ -3,6 +3,8 @@
     - bc.processBlock(block, statedb, start, setHead)
         - bc.processor.Process(block, statedb, bc.vmConfig)
         - [EVM processor](https://github.com/ethereum/go-ethereum/blob/67a3b087951a3f3a8e341ae32b6ec18f3553e5cc/core/state_processor.go#L57)
+        - [Read state](https://github.com/dajuguan/go-ethereum/blob/851542857cca75c731bd82bfa49fd4eadea033aa/core/vm/instructions.go#L521)
+            - EVM和DB交互的所有接口都在`type StateDB interface`中
 
 [以太坊的数据结构](https://s1na.substack.com/p/the-tale-of-5-dbs-24-07-26),主要包括5种DB:
 - ethdb: 定义了持久层的接口和leveldb/pebbledb/memorydb/remotedb对其接口的具体实现
@@ -43,13 +45,16 @@ stop CL first
 ```
 # set maxPeers = 1, and use trusted peer
 rm dump.dat (每次export之后的数据是追加的，因此需要先remove掉)
-geth export --nocompaction  --cache.noprefetch --datadir ./geth_full/ dump.dat start+1 end 
+geth export  --datadir ./geth_full/snap/ dump.dat start+1 end 
 
 geth attach ./geth_full/geth.ipc
-num=10344500
+num=22250601
 debug.setHead('0x'+(num).toString(16))  # hex formated blocknumber with ""
 for ( p of admin.peers) {admin.removePeer(p.enode)}; console.log(admin.peers.length)
 
 # 和engine API一样，核心都是调用的insertChain，不过需要确认的是engine API里调用的block.Hash的时间占用
-geth import --datadir ./geth_full/ dump.dat
+geth_std import --nocompaction  --cache.noprefetch --datadir ./geth_snap/ dump.dat
+geth import --nocompaction  --cache.noprefetch --datadir ./geth_snap/ dump.dat
+geth_std import --nocompaction  --cache.noprefetch --datadir ./geth_full/ dump.dat
+geth import --nocompaction  --cache.noprefetch --datadir ./geth_full/ dump.dat
 ```
