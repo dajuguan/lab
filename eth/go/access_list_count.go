@@ -10,15 +10,6 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-type KV struct {
-	Key string `json:"key"`
-	Val string `json:"val"`
-}
-type AccessList struct {
-	Address     string `json:"address"`
-	StorageKeys []KV   `json:"storageKeys"`
-}
-
 type AccessListEntry struct {
 	Address     string   `json:"address"`
 	StorageKeys []string `json:"storage_keys"`
@@ -33,21 +24,17 @@ type TraceResponse struct {
 	} `json:"post"`
 }
 
-type Config struct {
+type RPCConfig struct {
 	RPCURL string `json:"RPC_URL"`
 }
 
-type Block struct {
+type BlockHashes struct {
 	// must be capitalized
 	Number string   `json:"number"`
 	Hashes []string `json:"transactions"`
 }
 
-// type Transaction struct {
-// 	hash string `json:"hash"`
-// }
-
-func fetchBlockTxHashes(client *rpc.Client, blockNumber int64) ([]string, error) {
+func fetchTxHashesForBlock(client *rpc.Client, blockNumber int64) ([]string, error) {
 
 	var raw json.RawMessage
 	err := client.Call(&raw, "eth_getBlockByNumber", fmt.Sprintf("0x%x", blockNumber), false)
@@ -55,7 +42,7 @@ func fetchBlockTxHashes(client *rpc.Client, blockNumber int64) ([]string, error)
 		return nil, err
 	}
 	// Decode header and transactions.
-	var block *Block
+	var block *BlockHashes
 	if err := json.Unmarshal(raw, &block); err != nil {
 		return nil, err
 	}
@@ -63,7 +50,7 @@ func fetchBlockTxHashes(client *rpc.Client, blockNumber int64) ([]string, error)
 	return block.Hashes, nil
 }
 
-func getTxAccessList(client *rpc.Client, txHash string) (map[string]interface{}, error) {
+func fetchTxAccessList(client *rpc.Client, txHash string) (map[string]interface{}, error) {
 
 	var resp TraceResponse
 	err := client.Call(&resp, "debug_traceTransaction", txHash, map[string]interface{}{
@@ -131,7 +118,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to read .env file: %v", err)
 	}
-	var config Config
+	var config RPCConfig
 	if err := json.Unmarshal(configData, &config); err != nil {
 		log.Fatalf("Failed to parse .env file: %v", err)
 	}
@@ -168,7 +155,7 @@ func main() {
 	}
 
 	for blockNumber := blockStart; blockNumber < blockEnd; blockNumber++ {
-		txHashes, err := fetchBlockTxHashes(client, blockNumber)
+		txHashes, err := fetchTxHashesForBlock(client, blockNumber)
 		if err != nil {
 			log.Printf("Failed to fetch block %d: %v", blockNumber, err)
 			continue
@@ -180,7 +167,7 @@ func main() {
 			wg.Add(1)
 			go func(txHash string, i int) {
 				defer wg.Done()
-				result, err := getTxAccessList(client, txHash)
+				result, err := fetchTxAccessList(client, txHash)
 
 				if err != nil {
 					log.Printf("Failed to get access list for tx %s: %v", txHash, err)
@@ -199,13 +186,13 @@ func main() {
 		}
 		wg.Wait()
 
-		size_pre_for_block_bal := 0
-		size_pre_for_txs_bal := 0
-		size_post_for_txs_bal := 0
-		addr_for_txs_bal := 0
-		storagekeys_for_txs_bal := 0
-		addr_for_txs_post := 0
-		storagekeys_for_txs_post := 0
+		sizePreForBlockBal := 0
+		sizePreForTxsBal := 0
+		sizePostForTxsBal := 0
+		addrForTxsBal := 0
+		storageKeysForTxsBal := 0
+		addrForTxsPost := 0
+		storageKeysForTxsPost := 0
 
 		aclWithIdsSlice := make([]AccessListEntry, 0, len(txHashes))
 		for i := 0; i < len(txHashes); i++ {
@@ -217,37 +204,37 @@ func main() {
 			totalPostAddrForTxs += aclWithIndex.postAddrCount
 			totalPostStorageKeysForTxs += aclWithIndex.postStorageKeysCount
 
-			size_pre_for_txs_bal += aclWithIndex.preAddrCount*20 + aclWithIndex.preStorageKeysCount*32
-			size_post_for_txs_bal += aclWithIndex.postAddrCount*20 + aclWithIndex.postStorageKeysCount*32
-			addr_for_txs_bal += aclWithIndex.preAddrCount
-			storagekeys_for_txs_bal += aclWithIndex.preStorageKeysCount
-			addr_for_txs_post += aclWithIndex.postAddrCount
-			storagekeys_for_txs_post += aclWithIndex.postStorageKeysCount
+			sizePreForTxsBal += aclWithIndex.preAddrCount*20 + aclWithIndex.preStorageKeysCount*32
+			sizePostForTxsBal += aclWithIndex.postAddrCount*20 + aclWithIndex.postStorageKeysCount*32
+			addrForTxsBal += aclWithIndex.preAddrCount
+			storageKeysForTxsBal += aclWithIndex.preStorageKeysCount
+			addrForTxsPost += aclWithIndex.postAddrCount
+			storageKeysForTxsPost += aclWithIndex.postStorageKeysCount
 		}
 
-		addr_for_block_bal, storagekeys_for_block_bal := deduplicateAndSortAccessListCount(aclWithIdsSlice)
-		totalPreAddrForBlock += addr_for_block_bal
-		totalPreStorageKeysForBlock += storagekeys_for_block_bal
-		size_pre_for_block_bal += addr_for_block_bal*20 + storagekeys_for_block_bal*32
+		addrForBlockBal, storageKeysForBlockBal := deduplicateAndSortAccessListCount(aclWithIdsSlice)
+		totalPreAddrForBlock += addrForBlockBal
+		totalPreStorageKeysForBlock += storageKeysForBlockBal
+		sizePreForBlockBal += addrForBlockBal*20 + storageKeysForBlockBal*32
 
-		if size_pre_for_block_bal > maxSizeForBlockBal {
-			maxSizeForBlockBal = size_pre_for_block_bal
-			maxAddrForBlockBal = addr_for_block_bal
-			maxStorageKeysForBlockBal = storagekeys_for_block_bal
+		if sizePreForBlockBal > maxSizeForBlockBal {
+			maxSizeForBlockBal = sizePreForBlockBal
+			maxAddrForBlockBal = addrForBlockBal
+			maxStorageKeysForBlockBal = storageKeysForBlockBal
 		}
 
-		if size_pre_for_block_bal+size_post_for_txs_bal > maxSizeForBlockBalDiff {
-			maxSizeForBlockBalDiff = size_pre_for_block_bal + size_post_for_txs_bal
-			maxPreAddrForBlockBalDiff = addr_for_block_bal
-			maxPreStorageKeysForBlockBalDiff = storagekeys_for_block_bal
-			maxPostAddrForBlockBalDiff = addr_for_txs_post
-			maxPostStorageKeysForBlockBalDiff = storagekeys_for_txs_post
+		if sizePreForBlockBal+sizePostForTxsBal > maxSizeForBlockBalDiff {
+			maxSizeForBlockBalDiff = sizePreForBlockBal + sizePostForTxsBal
+			maxPreAddrForBlockBalDiff = addrForBlockBal
+			maxPreStorageKeysForBlockBalDiff = storageKeysForBlockBal
+			maxPostAddrForBlockBalDiff = addrForTxsPost
+			maxPostStorageKeysForBlockBalDiff = storageKeysForTxsPost
 		}
 
-		if size_pre_for_txs_bal > maxSizeForTxsBal {
-			maxSizeForTxsBal = size_pre_for_txs_bal
-			maxAddrForTxsBal = addr_for_txs_bal
-			maxStorageKeysForTxsBal = storagekeys_for_txs_bal
+		if sizePreForTxsBal > maxSizeForTxsBal {
+			maxSizeForTxsBal = sizePreForTxsBal
+			maxAddrForTxsBal = addrForTxsBal
+			maxStorageKeysForTxsBal = storageKeysForTxsBal
 		}
 	}
 
