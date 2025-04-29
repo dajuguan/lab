@@ -16,6 +16,7 @@
     - L2魔改EVM主要就是要修改statedb
 - rawdb: 可以看做KV数据的schema，他定义了实际的数据在DB中的key具体是如何定义的
 
+### hashdb
 ```
 var CodePrefix = []byte("c") // CodePrefix + code hash -> account code
 
@@ -28,6 +29,29 @@ func codeKey(hash common.Hash) []byte {
 func ReadCodeWithPrefix(db ethdb.KeyValueReader, hash common.Hash) []byte {
  data, _ := db.Get(codeKey(hash))
  return data
+}
+
+func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
+	data, err := db.Get(hash.Bytes())
+	if err != nil {
+		return nil
+	}
+	return data
+}
+```
+
+### pathdb
+```
+ func ReadStorageTrieNode(db ethdb.KeyValueReader, accountHash common.Hash, path []byte) []byte {
+	data, _ := db.Get(storageTrieNodeKey(accountHash, path))
+	return data
+}
+func storageTrieNodeKey(accountHash common.Hash, path []byte) []byte {
+	buf := make([]byte, len(TrieNodeStoragePrefix)+common.HashLength+len(path))
+	n := copy(buf, TrieNodeStoragePrefix)
+	n += copy(buf[n:], accountHash.Bytes())
+	copy(buf[n:], path)
+	return buf
 }
 ```
 
@@ -53,8 +77,29 @@ debug.setHead('0x'+(num).toString(16))  # hex formated blocknumber with ""
 for ( p of admin.peers) {admin.removePeer(p.enode)}; console.log(admin.peers.length)
 
 # 和engine API一样，核心都是调用的insertChain，不过需要确认的是engine API里调用的block.Hash的时间占用
-geth_std import --nocompaction  --cache.noprefetch --datadir ./geth_snap/ dump.dat
-geth import --nocompaction  --cache.noprefetch --datadir ./geth_snap/ dump.dat
+geth_std import --nocompaction  --cache.noprefetch --datadir ./geth_snap/ --snapshot false --pprof.cpuprofile cpu1.prof   --go-execution-trace trace1.out dump.dat
+ geth   --cache.noprefetch   --pprof.cpuprofile cpu1.prof   --go-execution-trace ./trace1.out --snapshot --datadir ./geth_snap import --nocompaction true   dump.100.dat
 geth_std import --nocompaction  --cache.noprefetch --datadir ./geth_full/ dump.dat
 geth import --nocompaction  --cache.noprefetch --datadir ./geth_full/ dump.dat
 ```
+
+## metric
+
+
+### Execution
+- accountRead
+- storageRead
+- blockExecution
+
+### Validation
+- Account/Storage Update
+- AccountHash
+- BlockValidation计算
+
+### Commit
+- Account/Storage Commits:并发执行，把更改后的状态保存到数据库
+- TrieDBCommits: 内存中会保存trie diff
+- Snapshot commit:
+- BlockWriteTime: 写区块，receipts等时间
+
+### Total: BlockInsertTime
