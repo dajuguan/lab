@@ -78,9 +78,15 @@ for ( p of admin.peers) {admin.removePeer(p.enode)}; console.log(admin.peers.len
 
 # 和engine API一样，核心都是调用的insertChain，不过需要确认的是engine API里调用的block.Hash的时间占用
 geth_std import --nocompaction  --cache.noprefetch --datadir ./geth_snap/ --snapshot false --pprof.cpuprofile cpu1.prof   --go-execution-trace trace1.out dump.dat
- geth   --cache.noprefetch   --pprof.cpuprofile cpu1.prof   --go-execution-trace ./trace1.out --snapshot --datadir ./geth_snap import --nocompaction true   dump.100.dat
+ geth  --metrics  --pprof.cpuprofile cpu_bal.prof  --go-execution-trace ./trace1.out --snapshot --datadir ./geth_snap import --nocompaction true   dump.100.dat
 geth_std import --nocompaction  --cache.noprefetch --datadir ./geth_full/ dump.dat
 geth import --nocompaction  --cache.noprefetch --datadir ./geth_full/ dump.dat
+
+go tool pprof -http=0.0.0.0:8080 cpu_std.prof
+go tool pprof -http=0.0.0.0:8080 cpu_bal.prof
+
+ ## run 3 times, mustn't have "/" after ancient
+ rsync -a --info=progress2 --exclude='./geth_snap_bak/geth/chaindata/ancient' ./geth_snap_bak/ ./geth_snap/
 ```
 
 ## metric
