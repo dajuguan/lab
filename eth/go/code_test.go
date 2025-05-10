@@ -3,12 +3,32 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPercent(t *testing.T) {
+	a := 3
+	b := 11
+	percent := float64(a) / float64(b)
+	fmt.Println(percent)
+	fmt.Println(int(math.Ceil(percent * 100.0)))
+}
+
+func TestCount(t *testing.T) {
+	for i := range 10 {
+		for j := range 10 {
+			if j == 5 {
+				break
+			}
+		}
+		fmt.Println(i)
+	}
+}
 
 func TestLoadCodeHash(t *testing.T) {
 	data := `{
