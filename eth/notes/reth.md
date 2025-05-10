@@ -4,16 +4,27 @@
 ```sh
 # the merge 15,537,394
 # current 22119000
-reth stage unwind --datadir ./rethdb_full to-block 16000000 
+reth stage unwind --datadir ./rethdb_full to-block 21973379 
 reth_maxperf=/root/test_nodes/op-sepolia/reth/target/maxperf/reth
 # samply record -p 3001 $reth_maxperf node --metrics localhost:9001 --authrpc.jwtsecret ../jwt.hex
-# start reth with --engine.caching-and-prewarming, then start reth-bench
+
+
+# start reth with --engine.caching-and-prewarming
+RUST_LOG=debug reth node --full --http   --http.api eth,net,debug,web3,txpool,rpc --authrpc.jwtsecret=../jwt.hex --discovery.port 30302 --port 30302 --http.port 7542 --authrpc.port 7552 --datadir ./rethdb_full --engine.caching-and-prewarming
+
+## start reth bench
 reth-bench new-payload-fcu --rpc-url http://localhost:7544 --from 21971329 --to 21973329 --jwtsecret ../jwt.hex  --engine-rpc-url http://localhost:7552 
 ```
 
 ### without livesync
 ```
-Total Ggas/s: 0.0946 total_duration=3926.347488098s total_gas_used=371482827669 blocks_processed=20331
+21973379 -> 21974379
+## with RUST_LOG=debug
+reth:0.1308 total_duration=140.932709237s total_gas_used=18429809083 blocks_processed=1000
+## without RUST_LOG=debug
+Total Ggas/s: 0.2045 total_duration=90.110011411s total_gas_used=18429809083 blocks_processed=1000
+## without RUST_LOG=debug
+acL:
 ```
 
 > rpc-url 是另外一个同步到最新块的L1 EL节点RPC，不能自己调自己
