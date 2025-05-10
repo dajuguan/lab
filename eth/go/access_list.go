@@ -9,7 +9,10 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/holiman/uint256"
 )
 
 type KV struct {
@@ -17,8 +20,11 @@ type KV struct {
 	Val string `json:"val"`
 }
 type AccessList struct {
-	Address     string `json:"address"`
-	StorageKeys []KV   `json:"storageKeys"`
+	Address     string      `json:"address"`
+	Balance     uint256.Int `json:"balance"`
+	Nonce       uint64      `json:"nonce"`
+	CodeHash    []byte      `json:"codeHash"`
+	StorageKeys []KV        `json:"storageKeys"`
 }
 
 type Config struct {
@@ -53,6 +59,9 @@ func fetchBlockTxHashes(client *rpc.Client, blockNumber int64) ([]string, error)
 
 func getTxAccessList(client *rpc.Client, txHash string) ([]AccessList, error) {
 	var result map[string]struct {
+		Balance *uint256.Int      `json:"balance"`
+		Nonce   uint64            `json:"nonce"`
+		Code    string            `json:"code"`
 		Storage map[string]string `json:"storage"`
 	}
 	err := client.Call(&result, "debug_traceTransaction", txHash, map[string]interface{}{
@@ -69,16 +78,79 @@ func getTxAccessList(client *rpc.Client, txHash string) ([]AccessList, error) {
 		for key, val := range data.Storage {
 			keys = append(keys, KV{Key: key, Val: val})
 		}
-		acl = append(acl, AccessList{Address: addr, StorageKeys: keys})
+		var codeHash []byte
+		if len(data.Code) != 0 {
+			code := common.FromHex(data.Code)
+			codeHash = crypto.Keccak256(code)
+		}
+		acl = append(acl, AccessList{
+			Address:     addr,
+			Balance:     *data.Balance,
+			Nonce:       data.Nonce,
+			CodeHash:    codeHash,
+			StorageKeys: keys,
+		})
 	}
+
+	return acl, nil
+}
+
+func getTxAccessListDiff(client *rpc.Client, txHash string) ([]AccessList, error) {
+	type TraceResponse struct {
+		Pre map[string]struct {
+			Balance *uint256.Int      `json:"balance"`
+			Code    string            `json:"code"`
+			Nonce   uint64            `json:"nonce"`
+			Storage map[string]string `json:"storage"`
+		} `json:"pre"`
+		Post map[string]struct {
+			Storage map[string]interface{} `json:"storage"`
+		} `json:"post"`
+	}
+
+	var result TraceResponse
+	err := client.Call(&result, "debug_traceTransaction", txHash, map[string]interface{}{
+		"tracer":       "prestateTracer",
+		"tracerConfig": map[string]bool{"disableCode": true, "diffMode": true},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var acl []AccessList
+	for addr, data := range result.Pre {
+		keys := []KV{}
+		for key, val := range data.Storage {
+			keys = append(keys, KV{Key: key, Val: val})
+		}
+		var codeHash []byte
+		if len(data.Code) != 0 {
+			code := common.FromHex(data.Code)
+			codeHash = crypto.Keccak256(code)
+		}
+		acl = append(acl, AccessList{
+			Address:     addr,
+			Balance:     *data.Balance,
+			Nonce:       data.Nonce,
+			CodeHash:    codeHash,
+			StorageKeys: keys,
+		})
+
+	}
+
 	return acl, nil
 }
 
 func deduplicateAndSortAccessList(acl []AccessList) ([]AccessList, int, int) {
 	addressMap := make(map[string]map[string]string)
+	acctMap := make(map[string]AccessList)
 	for _, entry := range acl {
 		if _, exists := addressMap[entry.Address]; !exists {
+			if entry.Nonce == 0 {
+
+			}
 			addressMap[entry.Address] = make(map[string]string)
+			acctMap[entry.Address] = entry
 		}
 		for _, key := range entry.StorageKeys {
 			if _, keyExists := addressMap[entry.Address][key.Key]; !keyExists {
@@ -94,7 +166,8 @@ func deduplicateAndSortAccessList(acl []AccessList) ([]AccessList, int, int) {
 		for key, val := range keysMap {
 			keys = append(keys, KV{Key: key, Val: val})
 		}
-		deduplicatedACL = append(deduplicatedACL, AccessList{Address: addr, StorageKeys: keys})
+		acct := acctMap[addr]
+		deduplicatedACL = append(deduplicatedACL, AccessList{Address: addr, Balance: acct.Balance, Nonce: acct.Nonce, CodeHash: acct.CodeHash, StorageKeys: keys})
 		keysLen += len(keys)
 	}
 
@@ -105,7 +178,7 @@ func deduplicateAndSortAccessList(acl []AccessList) ([]AccessList, int, int) {
 	return deduplicatedACL, len(deduplicatedACL), keysLen
 }
 
-func main() {
+func _main() {
 	// Load RPC URL from .env file
 	configData, err := ioutil.ReadFile("../.env")
 	if err != nil {
@@ -121,8 +194,8 @@ func main() {
 		log.Fatalf("Failed to connect to Ethereum node: %v", err)
 	}
 
-	blockStart := int64(22250600)
-	blockEnd := int64(22250601)
+	blockStart := int64(22347001)
+	blockEnd := int64(22347002)
 
 	var (
 		totalAddrCount, totalStorageKeysCount int
@@ -187,6 +260,9 @@ func main() {
 	// Deduplicate and sort allACL for each block
 	for blockNumber := blockStart; blockNumber < blockEnd; blockNumber++ {
 		allACL[blockNumber], addrInBlock, keysInBlock = deduplicateAndSortAccessList(allACL[blockNumber])
+
+		fmt.Println(blockNumber, addrInBlock, keysInBlock)
+		panic("exit")
 
 		addrInBlock = len(allACL[blockNumber])
 		sizeInBlock = addrInBlock*20 + keysInBlock*32

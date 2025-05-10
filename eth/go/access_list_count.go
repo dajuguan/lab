@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/rpc"
@@ -15,13 +16,17 @@ type AccessListEntry struct {
 	StorageKeys []string `json:"storage_keys"`
 }
 
-type TraceResponse struct {
+type TraceResponseDiff struct {
 	Pre map[string]struct {
 		Storage map[string]interface{} `json:"storage"`
 	} `json:"pre"`
 	Post map[string]struct {
 		Storage map[string]interface{} `json:"storage"`
 	} `json:"post"`
+}
+
+type TraceResponse map[string]struct {
+	Storage map[string]string `json:"storage"`
 }
 
 type RPCConfig struct {
@@ -52,10 +57,21 @@ func fetchTxHashesForBlock(client *rpc.Client, blockNumber int64) ([]string, err
 
 func fetchTxAccessList(client *rpc.Client, txHash string) (map[string]interface{}, error) {
 
-	var resp TraceResponse
-	err := client.Call(&resp, "debug_traceTransaction", txHash, map[string]interface{}{
+	// in diffmode, only changed account's pre and post values are returned, so pre is not complete
+	var respDiff TraceResponseDiff
+	err := client.Call(&respDiff, "debug_traceTransaction", txHash, map[string]interface{}{
 		"tracer":       "prestateTracer",
 		"tracerConfig": map[string]bool{"disableCode": true, "diffMode": true},
+	})
+	if err != nil {
+		log.Printf("Failed to trace transaction diff %s: %v", txHash, err)
+		return nil, err
+	}
+
+	var resp TraceResponse
+	err = client.Call(&resp, "debug_traceTransaction", txHash, map[string]interface{}{
+		"tracer":       "prestateTracer",
+		"tracerConfig": map[string]bool{"disableCode": true, "diffMode": false},
 	})
 	if err != nil {
 		log.Printf("Failed to trace transaction %s: %v", txHash, err)
@@ -67,7 +83,7 @@ func fetchTxAccessList(client *rpc.Client, txHash string) (map[string]interface{
 	preStorageKeysCount := 0
 	postStorageKeysCount := 0
 
-	for addr, data := range resp.Pre {
+	for addr, data := range resp {
 		storageKeys := []string{}
 		for key := range data.Storage {
 			storageKeys = append(storageKeys, key)
@@ -76,7 +92,7 @@ func fetchTxAccessList(client *rpc.Client, txHash string) (map[string]interface{
 		preStorageKeysCount += len(storageKeys)
 	}
 
-	for addr, data := range resp.Post {
+	for addr, data := range respDiff.Post {
 		storageKeys := []string{}
 		for key := range data.Storage {
 			storageKeys = append(storageKeys, key)
@@ -87,6 +103,7 @@ func fetchTxAccessList(client *rpc.Client, txHash string) (map[string]interface{
 
 	return map[string]interface{}{
 		"preACL":               preACL,
+		"postACL":              postACL,
 		"preStorageKeysCount":  preStorageKeysCount,
 		"postAddrCount":        len(postACL),
 		"postStorageKeysCount": postStorageKeysCount,
@@ -112,6 +129,77 @@ func deduplicateAndSortAccessListCount(acl []AccessListEntry) (int, int) {
 	return len(addressMap), keysLen
 }
 
+func deduplicatePreBALCount(pre []AccessListEntry, post []AccessListEntry) (int, int, int, int) {
+	postAddressMap := make(map[string]map[string]struct{})
+	for _, entry := range post {
+		if _, exists := postAddressMap[entry.Address]; !exists {
+			postAddressMap[entry.Address] = make(map[string]struct{})
+		}
+		for _, key := range entry.StorageKeys {
+			postAddressMap[entry.Address][key] = struct{}{}
+		}
+	}
+
+	addrCountMap := make(map[string]int)
+	addressExistInPost := make(map[string]bool)
+
+	slotCountMap := make(map[string]map[string]int)
+	slotExitInPost := make(map[string]map[string]bool)
+
+	for _, entry := range pre {
+		addr := entry.Address
+		postSlots, exists := postAddressMap[addr]
+		if exists {
+			addressExistInPost[addr] = true
+		}
+		addrCountMap[addr] += 1
+
+		for _, slot := range entry.StorageKeys {
+			if slotExitInPost[addr] == nil {
+				slotExitInPost[addr] = make(map[string]bool)
+			}
+			if slotCountMap[addr] == nil {
+				slotCountMap[addr] = make(map[string]int)
+			}
+			if _, exists := postSlots[slot]; exists {
+				slotExitInPost[addr][slot] = true
+			}
+			slotCountMap[addr][slot] += 1
+		}
+	}
+
+	addrCount := 0
+	slotCount := 0
+	caAddrCount := 0
+	eoaAddrCount := 0
+	for addr, count := range addrCountMap {
+		// if addr never exists in post, only count same addrs for once
+		if _, exists := postAddressMap[addr]; !exists {
+			count = 1
+		}
+		addrCount += count
+
+		// if slot never exists in post, only count same slot under an addr for once
+		slotMap := slotCountMap[addr]
+		if len(slotMap) == 0 {
+			eoaAddrCount += count
+		} else {
+			caAddrCount += count
+		}
+
+		for slot, sCount := range slotMap {
+			if val, _ := slotExitInPost[addr][slot]; !val {
+				slotCount += 1
+			} else {
+				slotCount += sCount
+			}
+		}
+
+	}
+
+	return addrCount, slotCount, eoaAddrCount, caAddrCount
+}
+
 func main() {
 	// Load RPC URL from .env file
 	configData, err := ioutil.ReadFile("../.env")
@@ -128,8 +216,8 @@ func main() {
 		log.Fatalf("Failed to connect to Ethereum node: %v", err)
 	}
 
-	blockStart := int64(22328000)
-	blockEnd := int64(22328003)
+	blockStart := int64(22347001)
+	blockEnd := int64(22349001)
 
 	txsCount := 0
 	totalPreAddrForBlock, totalPreStorageKeysForBlock := 0, 0
@@ -143,11 +231,15 @@ func main() {
 	maxSizeForBlockBalDiff := 0
 	maxSizeForTxsBal := 0
 
+	totalEOAAddrForTxsBal := 0
+	totalCAAddrForTxsBal := 0
+
 	var wg sync.WaitGroup
 
 	type ACLWithIndex struct {
 		index                int
 		preACL               []AccessListEntry
+		postACL              []AccessListEntry
 		preAddrCount         int
 		postAddrCount        int
 		preStorageKeysCount  int
@@ -175,12 +267,13 @@ func main() {
 				}
 
 				preACL := result["preACL"].([]AccessListEntry)
+				postACL := result["postACL"].([]AccessListEntry)
 				preAddrCount := len(preACL)
 				postAddrCount := result["postAddrCount"].(int)
 				preStorageKeysCount := result["preStorageKeysCount"].(int)
 				postStorageKeysCount := result["postStorageKeysCount"].(int)
 
-				aclWithIds <- ACLWithIndex{index: i, preACL: preACL, preAddrCount: preAddrCount, postAddrCount: postAddrCount, preStorageKeysCount: preStorageKeysCount, postStorageKeysCount: postStorageKeysCount}
+				aclWithIds <- ACLWithIndex{index: i, preACL: preACL, postACL: postACL, preAddrCount: preAddrCount, postAddrCount: postAddrCount, preStorageKeysCount: preStorageKeysCount, postStorageKeysCount: postStorageKeysCount}
 
 			}(txHash, i)
 		}
@@ -195,24 +288,34 @@ func main() {
 		storageKeysForTxsPost := 0
 
 		aclWithIdsSlice := make([]AccessListEntry, 0, len(txHashes))
+		aclWithIdsPostSlice := make([]AccessListEntry, 0, len(txHashes))
+
 		for i := 0; i < len(txHashes); i++ {
 			aclWithIndex := <-aclWithIds
 			aclWithIdsSlice = append(aclWithIdsSlice, aclWithIndex.preACL...)
+			aclWithIdsPostSlice = append(aclWithIdsPostSlice, aclWithIndex.postACL...)
 
-			totalPreAddrForTxs += aclWithIndex.preAddrCount
-			totalPreStorageKeysForTxs += aclWithIndex.preStorageKeysCount
 			totalPostAddrForTxs += aclWithIndex.postAddrCount
 			totalPostStorageKeysForTxs += aclWithIndex.postStorageKeysCount
-
-			sizePreForTxsBal += aclWithIndex.preAddrCount*20 + aclWithIndex.preStorageKeysCount*32
 			sizePostForTxsBal += aclWithIndex.postAddrCount*20 + aclWithIndex.postStorageKeysCount*32
-			addrForTxsBal += aclWithIndex.preAddrCount
-			storageKeysForTxsBal += aclWithIndex.preStorageKeysCount
+
+			// undedupcated pre
+			// addrForTxsBal += aclWithIndex.preAddrCount
+			// storageKeysForTxsBal += aclWithIndex.preStorageKeysCount
+
 			addrForTxsPost += aclWithIndex.postAddrCount
 			storageKeysForTxsPost += aclWithIndex.postStorageKeysCount
 		}
 
 		addrForBlockBal, storageKeysForBlockBal := deduplicateAndSortAccessListCount(aclWithIdsSlice)
+
+		addrForTxsBal, storageKeysForTxsBal, eoa, ca := deduplicatePreBALCount(aclWithIdsSlice, aclWithIdsPostSlice)
+		totalPreAddrForTxs += addrForTxsBal
+		totalPreStorageKeysForTxs += storageKeysForTxsBal
+		sizePreForTxsBal = addrForTxsBal*20 + storageKeysForTxsBal*32
+		totalEOAAddrForTxsBal += eoa
+		totalCAAddrForTxsBal += ca
+
 		totalPreAddrForBlock += addrForBlockBal
 		totalPreStorageKeysForBlock += storageKeysForBlockBal
 		sizePreForBlockBal += addrForBlockBal*20 + storageKeysForBlockBal*32
@@ -239,6 +342,9 @@ func main() {
 	}
 
 	// Final calculations and print statements
+	fmt.Println("blocks:", blockEnd-blockStart)
+	caPercent := float64(totalCAAddrForTxsBal) / float64(totalPreAddrForTxs)
+	fmt.Println("ca/total percentage:", caPercent)
 	meanAddrForBlockBal := totalPreAddrForBlock / int(blockEnd-blockStart)
 	meanKeysForBlockBal := totalPreStorageKeysForBlock / int(blockEnd-blockStart)
 	fmt.Printf("addr for block bal count, mean: %d, max: %d\n", meanAddrForBlockBal, maxAddrForBlockBal)
@@ -271,15 +377,22 @@ func main() {
 	maxSizeDiff := maxPreSizeBlockKey + maxPostAddrForBlockBalDiff*addrValSize + maxPostStorageKeysForBlockBalDiff*keyValSize
 	fmt.Printf("%40s, mean: %.2f, max: %.2f\n", "2:bal keys + diff vals size in bytes", float64(meanSizeDiff)/1000, float64(maxSizeDiff)/1000)
 
-	meanSizeBlockKV := meanAddrForBlockBal*addrValSize + meanKeysForBlockBal*keyValSize
-	maxSizeBlockKV := maxAddrForBlockBal*addrValSize + maxStorageKeysForBlockBal*keyValSize
-	fmt.Printf("%40s, mean: %.2f, max: %.2f\n", "3:bal kvs size in bytes", float64(meanSizeBlockKV)/1000, float64(maxSizeBlockKV)/1000)
+	// only slot value
+	meanSizeBlockKSV := meanAddrForBlockBal*20 + meanKeysForBlockBal*keyValSize
+	maxSizeBlockKSV := maxAddrForBlockBal*20 + maxStorageKeysForBlockBal*keyValSize
+	fmt.Printf("%40s, mean: %.2f, max: %.2f\n", "3:bal ksv size in bytes", float64(meanSizeBlockKSV)/1000, float64(maxSizeBlockKSV)/1000)
+
+	// acct value and slot value
+	meanSizeBlockKVSV := meanAddrForBlockBal*addrValSize + meanKeysForBlockBal*keyValSize
+	maxSizeBlockKVSV := maxAddrForBlockBal*addrValSize + maxStorageKeysForBlockBal*keyValSize
+	fmt.Printf("%40s, mean: %.2f, max: %.2f\n", "4:bal kvsv size in bytes", float64(meanSizeBlockKVSV)/1000, float64(maxSizeBlockKVSV)/1000)
 
 	meanSizeForBlockKVDiff := meanAddrForBlockBalDiff*addrValSize + meanKeysForBlockBalDiff*keyValSize
 	maxSizeForBlockKVDiff := maxAddrForBlockBalDiff*addrValSize + maxStorageKeysForBlockBalDiff*keyValSize
-	fmt.Printf("%40s, mean: %.2f, max: %.2f\n", "4:bal kvs + diff kvs size in bytes", float64(meanSizeForBlockKVDiff)/1000, float64(maxSizeForBlockKVDiff)/1000)
+	fmt.Printf("%40s, mean: %.2f, max: %.2f\n", "5:bal kvs + diff kvs size in bytes", float64(meanSizeForBlockKVDiff)/1000, float64(maxSizeForBlockKVDiff)/1000)
 
+	addrValSize = 20 + 8 + int(math.Ceil(32.0*caPercent))
 	meanSizeForTxsKV := meanAddrForTxsBal*addrValSize + meanKeysForTxsBal*keyValSize
 	maxSizeForTxsKV := maxAddrForTxsBal*addrValSize + maxStorageKeysForTxsBal*keyValSize
-	fmt.Printf("%40s, mean: %.2f, max: %.2f\n", "5:txs kvs size in bytes", float64(meanSizeForTxsKV)/1000, float64(maxSizeForTxsKV)/1000)
+	fmt.Printf("%40s, mean: %.2f, max: %.2f\n", "6:txs kvs size in bytes", float64(meanSizeForTxsKV)/1000, float64(maxSizeForTxsKV)/1000)
 }
