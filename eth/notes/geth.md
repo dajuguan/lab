@@ -89,8 +89,12 @@ go tool pprof -http=0.0.0.0:8080 cpu_bal.prof
  rsync -a --info=progress2 --exclude='./geth_snap_bak/geth/chaindata/ancient' ./geth_snap_bak/ ./geth_snap/
 ```
 
-## metric
+## 现有的geth commit
+```
+0c2ad076734e87fcc008e4718ba7b1f4f881b1fa
+```
 
+## metric
 
 ### Execution
 - accountRead
@@ -109,3 +113,12 @@ go tool pprof -http=0.0.0.0:8080 cpu_bal.prof
 - BlockWriteTime: 写区块，receipts等时间
 
 ### Total: BlockInsertTime
+
+
+## metrics grafana
+### influxdb：
+- 注意版本号为v1.11.8
+### prothemeus:
+- prometheus.yml: targets： 172.17.0.1
+- geth cmd: metrics.addr 0.0.0.0
+- 测试连通性: ip:9090
