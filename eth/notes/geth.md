@@ -86,7 +86,7 @@ go tool pprof -http=0.0.0.0:8080 cpu_std.prof
 go tool pprof -http=0.0.0.0:8080 cpu_bal.prof
 
  ## run 3 times, mustn't have "/" after ancient
- rsync -a --info=progress2 --exclude='./geth_snap_bak/geth/chaindata/ancient' ./geth_snap_bak/ ./geth_snap/
+ rsync -a --info=progress2 --delete --exclude='./geth_snap_bak/geth/chaindata/ancient' ./geth_snap_bak/ ./geth_snap/
 ```
 
 ## 现有的geth commit
