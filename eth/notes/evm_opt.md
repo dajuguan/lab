@@ -25,6 +25,7 @@
     - 如何calculate new state root
     - 如何commit dirty node
     - snapSync机制
+- Snapsync
 - Archive node pipeline工作
 - LevelDB设计及PebbleDB使用的底层优化技术
 - 线程调度 
@@ -71,3 +72,6 @@
                     => Stopped: (t *Tree) Journal(root common.Hash)
         
             
+## References
+- https://blog.ethereum.org/2020/07/17/ask-about-geth-snapshot-acceleration
+- Geth v1.10.0 snapsync
