@@ -1,6 +1,7 @@
 package trie
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -70,15 +71,16 @@ type PathDB struct {
 }
 
 func NewPathdb() *PathDB {
-	return &PathDB{
+	db := &PathDB{
 		disk:            map[string]Node{},
 		historyPreState: map[int]map[string]Node{},
 		rootToBlockNum:  map[common.Hash]int{},
 		root: Node{
-			kind:       FULL_NODE,
-			partialKey: []byte{},
+			kind: FULL_NODE,
 		},
 	}
+	db.root = *db.newFullNode([]byte{})
+	return db
 }
 
 func (d *PathDB) newFullNode(path Key) *Node {
@@ -108,11 +110,12 @@ func (d *PathDB) newLeafNode(path, partialKey Key, val []byte) *Node {
 	return &node
 }
 
-func (d *PathDB) Get(key Key) []byte {
-	rootKey := ""
-	root := d.disk[rootKey]
-	node := d._get(root, key, 0)
-	return node.data
+func (d *PathDB) Get(key Key) ([]byte, error) {
+	node := d._get(d.root, key, 0)
+	if node == nil {
+		return nil, fmt.Errorf("key not found: %v", key)
+	}
+	return node.data, nil
 }
 
 func (d *PathDB) _get(originNode Node, path Key, pos int) *Node {
@@ -123,6 +126,7 @@ func (d *PathDB) _get(originNode Node, path Key, pos int) *Node {
 		}
 		return &node
 	}
+
 	switch originNode.kind {
 	case FULL_NODE:
 		{
@@ -137,7 +141,11 @@ func (d *PathDB) _get(originNode Node, path Key, pos int) *Node {
 		}
 	case LEAF_NODE:
 		{
-			return &originNode
+			if bytes.Equal(originNode.partialKey, path[pos:]) {
+				return &originNode
+			} else {
+				return nil
+			}
 		}
 	default:
 		panic(fmt.Sprintf("%T invalid node: %v", originNode, originNode))
@@ -151,15 +159,13 @@ func (d *PathDB) Update(key Key, val []byte, blockNumber int) {
 }
 
 func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int) *Node {
-	if len(key) == 0 {
-		fullKey := append(prefix, key...)
-		panic(fmt.Sprintf("key length must be the same, key:%x, lenKey:%v \n", fullKey, len(fullKey)))
-	}
 	switch root.kind {
 	case FULL_NODE:
 		{
-			root, ok := d.disk[string(key[0])]
+			// fmt.Println("fullnode:", prefix, root)
 			prefix = append(prefix, key[0])
+			root, ok := d.disk[string(prefix)]
+			// fmt.Println("ok", root, ok)
 			if !ok {
 				node := d.newLeafNode(prefix, key[1:], val)
 				return node
@@ -171,8 +177,8 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 			matchLen := prefixLen(root.partialKey, key)
 			if matchLen == 0 {
 				d.newFullNode(prefix)
-				prefix = append(prefix, key[0])
-				return d.newLeafNode(prefix, key[1:], val)
+				// d.newShortNode(append(prefix, root.partialKey[0]), root.partialKey[1:])
+				return d.newLeafNode(append(prefix, key[0]), key[1:], val)
 			}
 
 			if matchLen == len(root.partialKey) {
@@ -192,13 +198,16 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 	case LEAF_NODE:
 		{
 			matchLen := prefixLen(root.partialKey, key)
+
+			// if leafNode's partialKey lengt is 0, we should check this first
+			if matchLen == len(root.partialKey) {
+				return d.newLeafNode(prefix, root.partialKey, val)
+			}
 			if matchLen == 0 {
 				d.newFullNode(prefix)
+				d.newLeafNode(append(prefix, root.partialKey[0]), root.partialKey[1:], root.data)
 				prefix = append(prefix, key[0])
 				return d.newLeafNode(prefix, key[1:], val)
-			}
-			if matchLen == len(root.partialKey) {
-				return d.newLeafNode(prefix, root.partialKey, val) // 只有这一行与上面的相同，
 			}
 			d.newShortNode(prefix, root.partialKey[:matchLen])
 			prefix = append(prefix, root.partialKey[:matchLen]...)
