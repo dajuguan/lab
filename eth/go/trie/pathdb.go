@@ -10,15 +10,17 @@ import (
 /* pathdb design
 目的: get, insert(update体现不需要新增加节点), rollback（直接采用blockNumber)
 定义好接口，再去实现
-Trie
-- get(path:string) -> value
-- update(path, value, blocknumber)
-- revert(root)
+Trie: 简单采用2^8=256-ary trie, 以适合byte表示
+DB: - key: path,
+	- val:
+		- nodetype(fullNode)
+		- nodetype+partialKey(shortNode)
+		- nodetype+partialKey+val(leafNode)
 
-假设key的长度都一样
+假设key的长度都一样,path均为node上一层的path
 fullNode：key:path, value: {nodetype}
-shortNode: key: fullpath, value: {nodetype, partialkey}
-leafNode: key: path(为上一层的path), node:{nodetype, partialkey, value}
+shortNode: key: path, value: {nodetype, partialkey}
+leafNode: key: path, node:{nodetype, partialkey, value}
 
 trie的处理
 insert: leaf存的是value，中间节点存的是下一层的两个path
@@ -59,8 +61,7 @@ get:
 
 ## revert
 记录修改的数据在该区块之前的状态
-if val, ok = history[block-1][key]; update的时候如果不存在,设置为nil; 插入过程中如果碰到了完全一样的leaf节点，并且val为nil，那么将history更新为旧值;
-操作过程中记录需要删除:重新插入一遍就可以了，需要记录下需要删除、增加/更新的path
+直接把DB revert为原来的就可以了
 */
 
 type PathDB struct {
