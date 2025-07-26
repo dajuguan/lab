@@ -68,6 +68,7 @@ type PathDB struct {
 	historyPreState map[int]map[string]Node
 	rootToBlockNum  map[common.Hash]int
 	root            Node
+	blockNumber     int
 }
 
 func NewPathdb() *PathDB {
@@ -79,32 +80,66 @@ func NewPathdb() *PathDB {
 			kind: FULL_NODE,
 		},
 	}
-	db.root = *db.newFullNode([]byte{})
+	bn := 0
+	db.root = *db.newFullNode([]byte{}, bn)
+	db.historyPreState[bn] = map[string]Node{}
 	return db
 }
 
-func (d *PathDB) newFullNode(path Key) *Node {
+func (d *PathDB) setBlockNumber(blockNumber int) {
+	d.blockNumber = blockNumber
+	if d.historyPreState[blockNumber] == nil {
+		d.historyPreState[blockNumber] = map[string]Node{}
+	}
+}
+
+func (d *PathDB) newFullNode(path Key, blockNumber int) *Node {
 	node := Node{
 		kind: FULL_NODE,
+	}
+	originNode := d.disk[string(path)]
+	// Snapshot prestate only during updates, not during reverts.
+	if blockNumber > d.blockNumber && !originNode.Equal(node) {
+		_, ok := d.historyPreState[d.blockNumber][string(path)]
+		if !ok {
+			d.historyPreState[d.blockNumber][string(path)] = originNode
+		}
 	}
 	d.disk[string(path)] = node
 	return &node
 }
 
-func (d *PathDB) newShortNode(path, partialKey Key) *Node {
+func (d *PathDB) newShortNode(path, partialKey Key, blockNumber int) *Node {
 	node := Node{
 		kind:       SHORT_NODE,
 		partialKey: partialKey,
 	}
+	originNode := d.disk[string(path)]
+	// Snapshot prestate only during updates, not during reverts.
+	if blockNumber > d.blockNumber && !originNode.Equal(node) {
+		_, ok := d.historyPreState[d.blockNumber][string(path)]
+		if !ok {
+			d.historyPreState[d.blockNumber][string(path)] = originNode
+		}
+	}
 	d.disk[string(path)] = node
 	return &node
 }
 
-func (d *PathDB) newLeafNode(path, partialKey Key, val []byte) *Node {
+func (d *PathDB) newLeafNode(path, partialKey Key, val []byte, blockNumber int) *Node {
 	node := Node{
 		kind:       LEAF_NODE,
 		partialKey: partialKey,
 		data:       val,
+	}
+	originNode := d.disk[string(path)]
+
+	// Snapshot prestate only during updates, not during reverts.
+	if blockNumber > d.blockNumber && !originNode.Equal(node) {
+		_, ok := d.historyPreState[d.blockNumber][string(path)]
+		if !ok {
+			d.historyPreState[d.blockNumber][string(path)] = originNode
+		}
 	}
 	d.disk[string(path)] = node
 	return &node
@@ -153,6 +188,10 @@ func (d *PathDB) _get(originNode Node, path Key, pos int) *Node {
 }
 
 func (d *PathDB) Update(key Key, val []byte, blockNumber int) {
+	if blockNumber < d.blockNumber {
+		panic("new blockNumber must > previous blockNumber")
+	}
+
 	rootKey := ""
 	root := d.disk[rootKey]
 	d._update(root, Key(rootKey), key, val, blockNumber)
@@ -162,12 +201,10 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 	switch root.kind {
 	case FULL_NODE:
 		{
-			// fmt.Println("fullnode:", prefix, root)
 			prefix = append(prefix, key[0])
 			root, ok := d.disk[string(prefix)]
-			// fmt.Println("ok", root, ok)
 			if !ok {
-				node := d.newLeafNode(prefix, key[1:], val)
+				node := d.newLeafNode(prefix, key[1:], val, blockNumber)
 				return node
 			}
 			return d._update(root, prefix, key[1:], val, blockNumber)
@@ -176,9 +213,8 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 		{
 			matchLen := prefixLen(root.partialKey, key)
 			if matchLen == 0 {
-				d.newFullNode(prefix)
-				// d.newShortNode(append(prefix, root.partialKey[0]), root.partialKey[1:])
-				return d.newLeafNode(append(prefix, key[0]), key[1:], val)
+				d.newFullNode(prefix, blockNumber)
+				return d.newLeafNode(append(prefix, key[0]), key[1:], val, blockNumber)
 			}
 
 			if matchLen == len(root.partialKey) {
@@ -189,11 +225,11 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 				}
 				return d._update(root, prefix, key[matchLen:], val, blockNumber)
 			}
-			d.newShortNode(prefix, root.partialKey[:matchLen])
+			d.newShortNode(prefix, root.partialKey[:matchLen], blockNumber)
 			prefix = append(prefix, root.partialKey[:matchLen]...)
-			d.newFullNode(prefix)
+			d.newFullNode(prefix, blockNumber)
 			prefix = append(prefix, key[matchLen])
-			return d.newLeafNode(prefix, key[matchLen+1:], val)
+			return d.newLeafNode(prefix, key[matchLen+1:], val, blockNumber)
 		}
 	case LEAF_NODE:
 		{
@@ -201,23 +237,43 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 
 			// if leafNode's partialKey lengt is 0, we should check this first
 			if matchLen == len(root.partialKey) {
-				return d.newLeafNode(prefix, root.partialKey, val)
+				return d.newLeafNode(prefix, root.partialKey, val, blockNumber)
 			}
 			if matchLen == 0 {
-				d.newFullNode(prefix)
-				d.newLeafNode(append(prefix, root.partialKey[0]), root.partialKey[1:], root.data)
+				d.newFullNode(prefix, blockNumber)
+				d.newLeafNode(append(prefix, root.partialKey[0]), root.partialKey[1:], root.data, blockNumber)
 				prefix = append(prefix, key[0])
-				return d.newLeafNode(prefix, key[1:], val)
+				return d.newLeafNode(prefix, key[1:], val, blockNumber)
 			}
-			d.newShortNode(prefix, root.partialKey[:matchLen])
+			d.newShortNode(prefix, root.partialKey[:matchLen], blockNumber)
 			prefix = append(prefix, root.partialKey[:matchLen]...)
-			d.newFullNode(prefix)
+			d.newFullNode(prefix, blockNumber)
 			prefix = append(prefix, key[matchLen])
-			return d.newLeafNode(prefix, key[matchLen+1:], val)
+			return d.newLeafNode(prefix, key[matchLen+1:], val, blockNumber)
 		}
 	default:
 		panic(fmt.Sprintf("%T invalid node: %v", root, root))
 	}
+}
+
+// revert to state after blockNumber
+func (d *PathDB) revert(targetBN int) error {
+	if targetBN >= d.blockNumber {
+		panic(fmt.Sprintf("target block number must be less than current blockNumber:%v", d.blockNumber))
+	}
+	for bn := d.blockNumber - 1; bn >= targetBN; bn-- {
+		history := d.historyPreState[bn]
+
+		for k, v := range history {
+			if v.Equal(Node{}) {
+				delete(d.disk, k)
+			} else {
+				d.disk[k] = v
+			}
+		}
+	}
+	d.setBlockNumber(targetBN)
+	return nil
 }
 
 func (d *PathDB) Revert(root common.Hash) error {

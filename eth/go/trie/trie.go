@@ -1,6 +1,7 @@
 package trie
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -20,15 +21,12 @@ type Node struct {
 	data       []byte
 }
 
-func (n *Node) String() string {
-	return fmt.Sprintf("kind:%v, key:%x, data:%x", n.kind, n.partialKey, n.data)
+func (n *Node) Equal(other Node) bool {
+	return n.kind == other.kind && bytes.Equal(n.partialKey, other.partialKey) && bytes.Equal(n.data, other.data)
 }
 
-func (v *Node) Data() []byte {
-	if v.kind != LEAF_NODE {
-		panic("Leaves() called on non-internal node")
-	}
-	return v.data
+func (n *Node) String() string {
+	return fmt.Sprintf("kind:%v, key:%x, data:%x", n.kind, n.partialKey, n.data)
 }
 
 type Key []byte
