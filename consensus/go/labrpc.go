@@ -28,7 +28,7 @@ clientEnd
 			- reply = req
 			- return reply
 server
-	- process(sharedEndCh)
+	- process(args from sharedEndCh)
 		- reply := service(requestArg)
 		- replyCh <- reply
 	- service
@@ -36,14 +36,110 @@ service
 	- [methodName]method
 */
 
+type Network struct {
+	servers     map[int]*Server
+	clients     map[int]*ClientEnd
+	sharedReqCh chan reqMsg
+	done        chan struct{}
+}
+
+func MakeNetwork() *Network {
+	rn := &Network{}
+	rn.servers = map[int]*Server{}
+	rn.clients = map[int]*ClientEnd{}
+	rn.sharedReqCh = make(chan reqMsg)
+	rn.done = make(chan struct{})
+
+	go func() {
+		for {
+			select {
+			case xreq := <-rn.sharedReqCh:
+				{
+					go rn.processReq(xreq)
+				}
+			case <-rn.done:
+				return
+			}
+		}
+	}()
+	return rn
+}
+
+func (rn *Network) processReq(req reqMsg) {
+	server, ok := rn.servers[req.endId]
+	if !ok {
+		panic("server is not initialized yet!")
+	}
+	resp := server.dispatch(req)
+	req.replyCh <- resp
+}
+
+func (rn *Network) AddServer(serverId int, server *Server) {
+	rn.servers[serverId] = server
+}
+
+func (rn *Network) MakeClient(clientId int) *ClientEnd {
+	c := ClientEnd{
+		endId:       clientId,
+		sharedReqCh: rn.sharedReqCh,
+		done:        rn.done,
+	}
+	rn.clients[clientId] = &c
+	return &c
+}
+
+type ClientEnd struct {
+	endId       int
+	sharedReqCh chan reqMsg
+	done        chan struct{} // closed when Network is cleaned up
+}
+
+func (c *ClientEnd) Call(svcMeth string, args interface{}, reply interface{}) bool {
+	req := reqMsg{}
+	req.svcMeth = svcMeth
+	req.endId = c.endId
+	req.argsType = reflect.TypeOf(args)
+	req.args, _ = json.Marshal(args)
+
+	req.replyCh = make(chan replyMsg)
+
+	select {
+	case c.sharedReqCh <- req:
+	case <-c.done:
+		return false
+	}
+
+	resp := <-req.replyCh
+	if resp.ok {
+		json.Unmarshal(resp.data, reply)
+		return true
+	} else {
+		return false
+	}
+}
+
+type Server struct {
+	// mu       sync.Mutex
+	// rpcCount int
+	service *Service
+}
+
+func (s *Server) dispatch(req reqMsg) replyMsg {
+	return s.service.dispatch(req.svcMeth, req)
+}
+
+func (s *Server) AddService(service *Service) {
+	s.service = service
+}
+
 type replyMsg struct {
-	ok    bool
-	reply interface{}
+	ok   bool
+	data []byte
 }
 
 type reqMsg struct {
-	endname  interface{} // name of sending ClientEnd
-	svcMeth  string      // e.g. "Raft.AppendEntries"
+	endId    int    // name of sending ClientEnd
+	svcMeth  string // e.g. "Raft.AppendEntries"
 	argsType reflect.Type
 	args     []byte
 	replyCh  chan replyMsg
@@ -61,7 +157,6 @@ func (svc *Service) dispatch(methname string, req reqMsg) replyMsg {
 		// prepare space into which to read the argument.
 		// the Value's type will be a pointer to req.argsType.
 		args := reflect.New(req.argsType)
-
 		// decode the argument.
 		json.Unmarshal(req.args, args.Interface())
 
@@ -72,12 +167,12 @@ func (svc *Service) dispatch(methname string, req reqMsg) replyMsg {
 
 		// call the method.
 		function := method.Func
-		function.Call([]reflect.Value{svc.rcvr, args, replyv})
+		function.Call([]reflect.Value{svc.rcvr, args.Elem(), replyv})
 
 		// encode the reply.
-		// out, _ := json.Marshal(replyv.Interface())
+		out, _ := json.Marshal(replyv.Interface())
 
-		return replyMsg{true, replyv.Interface()}
+		return replyMsg{ok: true, data: out}
 	} else {
 		choices := []string{}
 		for k, _ := range svc.methods {
@@ -116,8 +211,6 @@ func MakeService(rcvr interface{}) *Service {
 			svc.methods[mname] = method
 		}
 	}
-
-	fmt.Println("num methods:", len(svc.methods))
 
 	return svc
 }
