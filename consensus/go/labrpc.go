@@ -214,15 +214,3 @@ func MakeService(rcvr interface{}) *Service {
 
 	return svc
 }
-
-// func (c *expectedCall) Execute(t *testing.T, out interface{}) error {
-// 	output, err := c.abiMethod.Outputs.Pack(c.outputs...)
-// 	require.NoErrorf(t, err, "Invalid outputs for method %v: %v", c.abiMethod.Name, c.outputs)
-
-// 	// I admit I do not understand Go reflection.
-// 	// So leverage json.Unmarshal to set the out value correctly.
-// 	j, err := json.Marshal(hexutil.Bytes(output))
-// 	require.NoError(t, err)
-// 	require.NoError(t, json.Unmarshal(j, out))
-// 	return c.err
-// }

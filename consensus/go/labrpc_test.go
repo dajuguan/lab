@@ -18,6 +18,7 @@ type TestArg struct {
 	Peer int
 }
 
+// Should only have two args and all fields in the args/reply struct should be capitalized.
 func (s *TestService) Hello(args *TestArg, reply *string) {
 	*reply = TestReply
 }
