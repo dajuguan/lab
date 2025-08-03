@@ -1,3 +1,8 @@
+// references:
+// how pathdb works: https://github.com/PublicGoodsNode/ethereum-code-walkthrough/blob/main/Geth%E6%BA%90%E7%A0%81%E7%B3%BB%E5%88%97%EF%BC%9A%E5%AD%98%E5%82%A8%E8%AE%BE%E8%AE%A1%E5%8F%8A%E5%AE%9E%E7%8E%B0.md#%E5%AE%9E%E4%BE%8B%E5%85%A8%E8%8A%82%E7%82%B9%E4%B8%8B-hashdb-%E5%92%8C-pathdb-%E5%AE%9E%E9%99%85%E8%90%BD%E7%9B%98%E5%AF%B9%E6%AF%94
+// update: https://github.com/ethereum/go-ethereum/blob/5572f2ed229ff1f3aa0967e32af320a4b01be16d/trie/trie.go#L327
+// database commit: https://github.com/ethereum/go-ethereum/blob/b6c62d5887e2bea38df0c294077d30ca0f6a3c97/triedb/pathdb/flush.go#L39
+// revert: https://github.com/ethereum/go-ethereum/blob/0eb2eeea908d654b971249142fcbb735ba2c6923/triedb/pathdb/disklayer.go#L290
 package trie
 
 import (
@@ -8,60 +13,113 @@ import (
 )
 
 /* pathdb design
-目的: get, insert(update体现不需要新增加节点), rollback（直接采用blockNumber)
-定义好接口，再去实现
-Trie: 简单采用2^8=256-ary trie, 以适合byte表示
-DB: - key: path,
-	- val:
-		- nodetype(fullNode)
-		- nodetype+partialKey(shortNode)
-		- nodetype+partialKey+val(leafNode)
+setBlockNumber(1)
+a）initial trie
+root = fullNode("")
 
-假设key的长度都一样,path均为node上一层的path
-fullNode：key:path, value: {nodetype}
-shortNode: key: path, value: {nodetype, partialkey}
-leafNode: key: path, node:{nodetype, partialkey, value}
+b) put(h0,d0), h0=abbb (key with 4byes)
+root.children[a]=n0
+n0=leaf{key:"bbb", val:d0}
+key ''  => root (fullNode{})
+key 'a' => n0
 
-trie的处理
-insert: leaf存的是value，中间节点存的是下一层的两个path
-- 1.从根节点开始往下遍历，找到公共前缀，如果是空节点，那么插入一个leaf节点，并更新root
-- 2.如果是fullNode:
-	- 插入key[0]的节点
-- 2.如果是short节点（保存了key，以及下一个节点的key作为value)
-	- 查找公共前缀
-	- prefix=0:
-		- 创建fullNode
-			- 创建newNode: db
-			- 将short节点、newNode插入到对应的children
-	- prefix部分包含:
-		- 更新prefix对应的shortNode的partialKey为: partialKey[:matchedLen]
-		- 创建fullNode
-			- db插入新fullNode, path=prefix+matched
-			- db创建leafnode，path=prefix+matched+key[matchedLen], key=key[matchedLen+1], val=val
-	- prefix完全包含:
-		- db查找append shortNode的value中包含的key，对应的节点node
-		- 往该节点查找insert(node， path - prefix, value)
-- 3.如果是leaf节点：
-	- 查找公共前缀：
-		- prefix=0:
-			- db创建新的fullnode, path=prefix
-			- db创建新的leafNode, path=prefix+key[0], key=key[1:], val=val
-		- prefix部分包含:
-			- 缩短leafnode的key(更新父节点的value,db插入新shortnode)
-			- 创建fullNode,更新shortNode的value为fullNode
-				- 创建leafnode，db插入新节点
-				- 将新shortnode插入作为其children, 无db
-		-prefix全部包含，直接全部更新:
-			- db直接更新对应的value
+history[0]['a'] = null // for reverting
 
-搞混了内存和DB中的操作
-get:
-1.直到找到leaf 节点，就可以了
-## multi-version read
+c) put(h1,d1), h1=bbbb
+root.children[b]=n1
+n1=leaf{key:"bbb", val:d1}
+key ''  => root (fullNode{})
+key 'a' => n0 (leaf{key:"bbb", val:d0})
+key 'b' => n1 (leaf{key:"bbb", val:d1})
 
-## revert
-记录修改的数据在该区块之前的状态
-直接把DB revert为原来的就可以了
+history[0]['a']=null
+
+history[0]['b']=null
+
+setBlockNumber(2)
+d) put(h2,d2), h2=abbc
+root.children[a] = n2
+n2 = shortNode(n3)
+n3 = fullNode
+n3.children['b']= n4 = leafNode{key:'', val: d0}
+n3.children['c']= n5 = leafNode{key:'', val: d2}
+
+key ''  => root (fullNode{})
+key 'a' => n2 (shortNode{key:'bb'})
+key 'b' => n1 (leaf{key:"bbb", val:d1})
+key 'abb' => n3 (fullNode{})
+key 'abbb' => n4 (leafNode{key:'', val: d0})
+key 'abbc' => n5 (leafNode{key:'', val: d2})
+
+history[0]['a'] = null
+history[0]['b'] = null
+
+history[1]['a'] = leaf{key:"bbb", val:d0}
+history[1]['abb'] = null
+history[1]['abbb'] = null
+history[1]['abbc'] = null
+
+e) put(h3,d3), h3=bcdd
+root.children[b] = n6
+n6 = fullNode
+n6.children['b']=n7
+n6.children['c']=n8
+n7=leafNode{key:'bb', val: d1}
+n8=leafNode{key:'dd', val: d3}
+
+key ''  => root (fullNode{})
+key 'a' => n2 (shortNode{key:'bb'})
+key 'b' => n6 (fullNode{})
+key 'abb' => n3 (fullNode{})
+key 'abbb' => n4 (leafNode{key:'', val: d0})
+key 'abbc' => n5 (leafNode{key:'', val: d2})
+key 'bb' => n7 (leafNode{key:'bb', val: d1})
+key 'bc' => n8 (leafNode{key:'dd', val: d3})
+
+history[0]['a'] = null
+history[0]['b'] = null
+history[1]['a'] = leaf{key:"bbb", val:d0}
+history[1]['abb'] = null
+history[1]['abbb'] = null
+history[1]['abbc'] = null
+
+history[1]['b'] = leaf{key:"bbb", val:d1}
+history[1]['bb'] =null
+history[1]['bc'] =null
+
+
+f) put(h3,d4), h3=bcdd
+n6.children['c']=n9
+n9=leafNode{key:'dd', val: d4}
+
+key ''  => root (fullNode{})
+key 'a' => n2 (shortNode{key:'bb'})
+key 'b' => n6 (fullNode{})
+key 'abb' => n3 (fullNode{})
+key 'abbb' => n4 (leafNode{key:'', val: d0})
+key 'abbc' => n5 (leafNode{key:'', val: d2})
+key 'bb' => n7 (leafNode{key:'bb', val: d1})
+key 'bc' => n8 (leafNode{key:'dd', val: d4})
+
+history[0]['a'] = null
+history[0]['b'] = null
+history[1]['a'] = leaf{key:"bbb", val:d0}
+history[1]['abb'] = null
+history[1]['abbb'] = null
+history[1]['abbc'] = null
+history[1]['b'] = leaf{key:"bbb", val:d1}
+history[1]['bb'] =null
+history[1]['bc'] =null
+
+g) revert to state after blockNumber 1
+apply history states with blockNumber>=1 recursively; if val is null delete; else apply
+
+key ''  => root (fullNode{})
+key 'a' => leaf{key:"bbb", val:d0}
+key 'b' => leaf{key:"bbb", val:d1}
+
+history[0]['a'] = null
+history[0]['b'] = null
 */
 
 type PathDB struct {
@@ -241,16 +299,18 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 				return d.newLeafNode(prefix, root.partialKey, val, blockNumber)
 			}
 			if matchLen == 0 {
-				d.newFullNode(prefix, blockNumber)
+				node := d.newFullNode(prefix, blockNumber)
 				d.newLeafNode(append(prefix, root.partialKey[0]), root.partialKey[1:], root.data, blockNumber)
 				prefix = append(prefix, key[0])
-				return d.newLeafNode(prefix, key[1:], val, blockNumber)
+				d.newLeafNode(prefix, key[1:], val, blockNumber)
+				return node
 			}
-			d.newShortNode(prefix, root.partialKey[:matchLen], blockNumber)
+			node := d.newShortNode(prefix, root.partialKey[:matchLen], blockNumber)
 			prefix = append(prefix, root.partialKey[:matchLen]...)
 			d.newFullNode(prefix, blockNumber)
-			prefix = append(prefix, key[matchLen])
-			return d.newLeafNode(prefix, key[matchLen+1:], val, blockNumber)
+			d.newLeafNode(append(prefix, key[matchLen]), key[matchLen+1:], val, blockNumber)
+			d.newLeafNode(append(prefix, root.partialKey[matchLen]), root.partialKey[matchLen+1:], root.data, blockNumber)
+			return node
 		}
 	default:
 		panic(fmt.Sprintf("%T invalid node: %v", root, root))

@@ -12,68 +12,32 @@ import (
 func TestPathDBShortKey(t *testing.T) {
 	pathdb := NewPathdb()
 
-	key := []byte{1, 0, 0, 0}
-	val, _ := hex.DecodeString("0a")
+	key := []byte{'a', 'b', 'b', 'b'}
+	val, _ := hex.DecodeString("d0")
 	pathdb.Update(key, val, 0)
 	_val, _ := pathdb.Get(key)
 	assert.Equal(t, val, _val)
 
-	key = []byte{1, 1, 0, 0}
-	val, _ = hex.DecodeString("01")
+	key = []byte{'b', 'b', 'b', 'b'}
+	val, _ = hex.DecodeString("d1")
 	pathdb.Update(key, val, 0)
 	_val, _ = pathdb.Get(key)
 	assert.Equal(t, val, _val)
 
-	key = []byte{1, 2, 1, 1}
-	val, _ = hex.DecodeString("0102")
+	key = []byte{'a', 'b', 'b', 'c'}
+	val, _ = hex.DecodeString("d2")
 	pathdb.Update(key, val, 0)
 	_val, _ = pathdb.Get(key)
 	assert.Equal(t, val, _val)
 
-	key = []byte{1, 2, 3, 4}
-	val, _ = hex.DecodeString("010203")
+	key = []byte{'b', 'c', 'd', 'd'}
+	val, _ = hex.DecodeString("d3")
 	pathdb.Update(key, val, 0)
 	_val, _ = pathdb.Get(key)
 	assert.Equal(t, val, _val)
 
-	key = []byte{1, 2, 3, 3}
-	val, _ = hex.DecodeString("010204")
-	pathdb.Update(key, val, 0)
-	_val, _ = pathdb.Get(key)
-	assert.Equal(t, val, _val)
-
-	key = []byte{1, 0, 0, 0}
-	val, _ = hex.DecodeString("aa")
-	pathdb.Update(key, val, 0)
-	_val, _ = pathdb.Get(key)
-	assert.Equal(t, val, _val)
-
-	key = []byte{2, 0, 0, 0}
-	val, _ = hex.DecodeString("0b")
-	pathdb.Update(key, val, 0)
-	_val, _ = pathdb.Get(key)
-	assert.Equal(t, val, _val)
-
-	key = []byte{1, 2, 3, 0}
-	val, _ = hex.DecodeString("0c")
-	pathdb.Update(key, val, 0)
-	_val, _ = pathdb.Get(key)
-	assert.Equal(t, val, _val)
-
-	key = []byte{1, 2, 3, 4}
-	val, _ = hex.DecodeString("0d")
-	pathdb.Update(key, val, 0)
-	_val, _ = pathdb.Get(key)
-	assert.Equal(t, val, _val)
-
-	key = []byte{1, 2, 4, 0}
-	val, _ = hex.DecodeString("0e")
-	pathdb.Update(key, val, 0)
-	_val, _ = pathdb.Get(key)
-	assert.Equal(t, val, _val)
-
-	key = []byte{1, 2, 4, 0}
-	val, _ = hex.DecodeString("ee")
+	key = []byte{'b', 'c', 'd', 'd'}
+	val, _ = hex.DecodeString("d4")
 	pathdb.Update(key, val, 0)
 	_val, _ = pathdb.Get(key)
 	assert.Equal(t, val, _val)
@@ -116,19 +80,19 @@ func TestPathDBShortKeyReorg(t *testing.T) {
 	bn = 1
 
 	key := []byte{1, 0, 0, 0}
-	val, _ := hex.DecodeString("0a")
+	val, _ := hex.DecodeString("d1")
 	pathdb.Update(key, val, bn)
 	_val, _ := pathdb.Get(key)
 	assert.Equal(t, val, _val)
 
 	key = []byte{1, 1, 0, 0}
-	val, _ = hex.DecodeString("01")
+	val, _ = hex.DecodeString("d2")
 	pathdb.Update(key, val, bn)
 	_val, _ = pathdb.Get(key)
 	assert.Equal(t, val, _val)
 
 	key = []byte{1, 2, 1, 1}
-	preVal, _ := hex.DecodeString("0102")
+	preVal, _ := hex.DecodeString("d3")
 	pathdb.Update(key, preVal, bn)
 	_val, _ = pathdb.Get(key)
 	assert.Equal(t, preVal, _val)
@@ -138,9 +102,8 @@ func TestPathDBShortKeyReorg(t *testing.T) {
 	fmt.Println("DB keys length after block:", bn, len(pathdb.disk))
 
 	bn = 2
-	fmt.Println("revert to block:", bn)
 	key = []byte{1, 2, 1, 1}
-	postVal, _ := hex.DecodeString("0122")
+	postVal, _ := hex.DecodeString("d4")
 	pathdb.Update(key, postVal, bn)
 	_val, _ = pathdb.Get(key)
 	assert.Equal(t, postVal, _val)

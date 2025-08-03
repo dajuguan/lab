@@ -9,7 +9,7 @@ import (
 )
 
 /*
-Trie: 同样采用2^8=256-ary,便于直接用byte表示
+Trie: use 2^8=256-ary to represent trie arity with simple one byte
 DB: - key: hash(path)
 	- val:
 		- fullNode: nodetype, val: {partialKey: hashOfNexNode's(nodetype, partialKey, val))}
