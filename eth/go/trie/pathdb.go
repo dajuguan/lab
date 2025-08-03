@@ -272,8 +272,10 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 		{
 			matchLen := prefixLen(root.partialKey, key)
 			if matchLen == 0 {
-				d.newFullNode(prefix, blockNumber)
-				return d.newLeafNode(append(prefix, key[0]), key[1:], val, blockNumber)
+				parentNode := d.newFullNode(prefix, blockNumber)
+				d.newLeafNode(append(prefix, key[0]), key[1:], val, blockNumber)
+				d.newLeafNode(append(prefix, root.partialKey[0]), root.partialKey[1:], root.data, blockNumber)
+				return parentNode
 			}
 
 			if matchLen == len(root.partialKey) {
@@ -284,11 +286,12 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 				}
 				return d._update(root, prefix, key[matchLen:], val, blockNumber)
 			}
-			d.newShortNode(prefix, root.partialKey[:matchLen], blockNumber)
+			parentNode := d.newShortNode(prefix, root.partialKey[:matchLen], blockNumber)
 			prefix = append(prefix, root.partialKey[:matchLen]...)
 			d.newFullNode(prefix, blockNumber)
 			prefix = append(prefix, key[matchLen])
-			return d.newLeafNode(prefix, key[matchLen+1:], val, blockNumber)
+			d.newLeafNode(prefix, key[matchLen+1:], val, blockNumber)
+			return parentNode
 		}
 	case LEAF_NODE:
 		{
@@ -299,18 +302,18 @@ func (d *PathDB) _update(root Node, prefix, key Key, val []byte, blockNumber int
 				return d.newLeafNode(prefix, root.partialKey, val, blockNumber)
 			}
 			if matchLen == 0 {
-				node := d.newFullNode(prefix, blockNumber)
+				parentNode := d.newFullNode(prefix, blockNumber)
 				d.newLeafNode(append(prefix, root.partialKey[0]), root.partialKey[1:], root.data, blockNumber)
 				prefix = append(prefix, key[0])
 				d.newLeafNode(prefix, key[1:], val, blockNumber)
-				return node
+				return parentNode
 			}
-			node := d.newShortNode(prefix, root.partialKey[:matchLen], blockNumber)
+			parentNode := d.newShortNode(prefix, root.partialKey[:matchLen], blockNumber)
 			prefix = append(prefix, root.partialKey[:matchLen]...)
 			d.newFullNode(prefix, blockNumber)
 			d.newLeafNode(append(prefix, key[matchLen]), key[matchLen+1:], val, blockNumber)
 			d.newLeafNode(append(prefix, root.partialKey[matchLen]), root.partialKey[matchLen+1:], root.data, blockNumber)
-			return node
+			return parentNode
 		}
 	default:
 		panic(fmt.Sprintf("%T invalid node: %v", root, root))
