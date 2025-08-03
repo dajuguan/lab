@@ -32,9 +32,9 @@ key ''  => root (fullNode{})
 key 'a' => n0 (leaf{key:"bbb", val:d0})
 key 'b' => n1 (leaf{key:"bbb", val:d1})
 
-history[0]['a']=null
+history[0]['a'] = null
 
-history[0]['b']=null
+history[0]['b'] = null
 
 setBlockNumber(2)
 d) put(h2,d2), h2=abbc
@@ -84,8 +84,8 @@ history[1]['abbb'] = null
 history[1]['abbc'] = null
 
 history[1]['b'] = leaf{key:"bbb", val:d1}
-history[1]['bb'] =null
-history[1]['bc'] =null
+history[1]['bb'] = null
+history[1]['bc'] = null
 
 
 f) put(h3,d4), h3=bcdd
@@ -99,7 +99,7 @@ key 'abb' => n3 (fullNode{})
 key 'abbb' => n4 (leafNode{key:'', val: d0})
 key 'abbc' => n5 (leafNode{key:'', val: d2})
 key 'bb' => n7 (leafNode{key:'bb', val: d1})
-key 'bc' => n8 (leafNode{key:'dd', val: d4})
+key 'bc' => n9 (leafNode{key:'dd', val: d4})
 
 history[0]['a'] = null
 history[0]['b'] = null
@@ -108,8 +108,8 @@ history[1]['abb'] = null
 history[1]['abbb'] = null
 history[1]['abbc'] = null
 history[1]['b'] = leaf{key:"bbb", val:d1}
-history[1]['bb'] =null
-history[1]['bc'] =null
+history[1]['bb'] = null
+history[1]['bc'] = null
 
 g) revert to state after blockNumber 1
 apply history states with blockNumber>=1 recursively; if val is null delete; else apply
