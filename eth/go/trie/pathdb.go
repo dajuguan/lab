@@ -23,7 +23,7 @@ n0=leaf{key:"bbb", val:d0}
 key ''  => root (fullNode{})
 key 'a' => n0
 
-history[0]['a'] = null // for reverting
+history[0]['a'] = null // stores "prestate" before apply txs in the current block for reverting
 
 c) put(h1,d1), h1=bbbb
 root.children[b]=n1
