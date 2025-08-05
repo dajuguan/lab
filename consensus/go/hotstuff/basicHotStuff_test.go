@@ -72,18 +72,17 @@ func TestBasicHotStuffLivenessA(t *testing.T) {
 	fmt.Printf("\n---------- Round %d: Leader %d proposes ----------\n", round, BasicLeader)
 	leader.proposeBlock(command, nodes)
 
+	// Wait for all nodes to commit this block
+	cases := make([]reflect.SelectCase, NumNodes)
+	for i := 0; i < NumNodes; i++ {
+		cases[i] = reflect.SelectCase{
+			Dir:  reflect.SelectRecv,
+			Chan: reflect.ValueOf(nodes[i].applyCh),
+		}
+	}
 	// Simulate 10 rounds of consensus
 	var leaderBlock *Block
 	for round := 0; round < 3; round++ {
-		// Wait for all nodes to commit this block
-		cases := make([]reflect.SelectCase, NumNodes)
-		for i := 0; i < NumNodes; i++ {
-			cases[i] = reflect.SelectCase{
-				Dir:  reflect.SelectRecv,
-				Chan: reflect.ValueOf(nodes[i].applyCh),
-			}
-		}
-
 		for commitCount := 0; commitCount < NumNodes; commitCount++ {
 			chosen, value, _ := reflect.Select(cases)
 			block := value.Interface().(*Block)
@@ -94,7 +93,7 @@ func TestBasicHotStuffLivenessA(t *testing.T) {
 			}
 			fmt.Printf("Got Node %d committed block %v\n", chosen, block.Height)
 		}
-		fmt.Printf("All nodes committed block for round %d\n", round)
+		fmt.Printf("++++++++++All nodes committed block for round %d++++++++++\n", round)
 		leaderBlock = nil
 	}
 
