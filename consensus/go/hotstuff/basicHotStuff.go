@@ -163,6 +163,9 @@ func (n *SimpleNode) commit(block *Block) {
 
 	// Add block to local storage
 	n.blocks[block.Height] = block
+	if n.uncommitedBlocks[block.Height] != nil {
+		delete(n.uncommitedBlocks, block.Height)
+	}
 
 	// Send block to applyCh for external tracking
 	n.applyCh <- block
@@ -342,8 +345,6 @@ func (n *SimpleNode) startNewViewConsensus(view int, allNodes []*SimpleNode) {
 	// simulate leader rotation
 	BasicLeader = n.ID
 	BasicNextLeader = n.nextLeader(view)
-	// TODO: clear n.newViewMsgs
-
 	// Clear votes for new consensus
 	n.votes = make(map[int]bool)
 	// Update timer
@@ -356,6 +357,8 @@ func (n *SimpleNode) startNewViewConsensus(view int, allNodes []*SimpleNode) {
 			highestQC = msg.Justify
 		}
 	}
+	// Clear n.newViewMsgs
+	n.newViewMsgs[view] = nil
 
 	// Create new block
 	parent := n.blocks[0]
@@ -425,45 +428,32 @@ func (n *SimpleNode) onQuorum(view int, blockNumber int, allNodes []*SimpleNode)
 	n.newViewTimeoutTimer.Reset(Timeout)
 
 	// Advance to next phase
+	nextPhase := n.phase
 	switch n.phase {
 	case Prepare:
 		n.phase = PreCommit
-		msg := Message{
-			Type:    PreCommit,
-			View:    view,
-			Block:   block,
-			Justify: qc,
-			Sender:  n.ID,
-		}
-		fmt.Printf("[Leader %d] Broadcasting PrepareQC for block %v\n", n.ID, block.Height)
-		n.broadcast(msg, allNodes)
+		nextPhase = n.phase
 	case PreCommit:
 		n.phase = Commit
-		msg := Message{
-			Type:    Commit,
-			View:    view,
-			Block:   block,
-			Justify: qc,
-			Sender:  n.ID,
-		}
-		fmt.Printf("[Leader %d] Broadcasting PreCommitQC for block %v\n", n.ID, block.Height)
-		n.broadcast(msg, allNodes)
+		nextPhase = n.phase
 	case Commit:
 		// Send commitQC to followers so they can commit the block
-		// n.phase = Decide
-		commitMsg := Message{
-			Type:    Decide, // Use Decide phase to indicate commitQC
-			View:    view,
-			Block:   block,
-			Justify: qc, // This is the commitQC
-			Sender:  n.ID,
-		}
-		fmt.Printf("[Leader %d] Broadcasting CommitQC for block %v\n", n.ID, block.Height)
+		nextPhase = Decide
 		// Leader also commits the block locally
 		n.commit(block)
 		n.phase = NewView
-		n.broadcast(commitMsg, allNodes)
+		n.view++
 	}
+
+	msg := Message{
+		Type:    nextPhase,
+		View:    view,
+		Block:   block,
+		Justify: qc,
+		Sender:  n.ID,
+	}
+	fmt.Printf("[Leader %d] Broadcasting [Phase:%v] for block %v\n", n.ID, nextPhase, block.Height)
+	n.broadcast(msg, allNodes)
 }
 
 func (n *SimpleNode) onTimeout(allNodes []*SimpleNode) {
