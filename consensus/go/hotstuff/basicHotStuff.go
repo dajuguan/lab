@@ -79,7 +79,7 @@ func NewSimpleNode(id int, leader *BasicLeaderConf) *SimpleNode {
 		voteCh:              make(chan Vote, 100),
 		applyCh:             make(chan *Block, 100),
 		prepareCh:           make(chan *Block, 100),
-		delay:               time.Duration(5 * time.Millisecond),
+		delay:               time.Duration(1 * time.Millisecond),
 		threshold:           QuorumSize,
 		newViewTimeoutTimer: time.NewTimer(Timeout),
 		dead:                false,
@@ -184,11 +184,10 @@ func (n *SimpleNode) onPrepare(msg Message, allNodes []*SimpleNode) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if time.Since(n.lastUpdate) > Timeout {
-		return
-	}
-
-	if msg.View < n.view {
+	if msg.View < n.view { // use view check to drop old request caused by timeout or network delay.
+		// So there is no need to check lastUpdated, condider the race condition:
+		// 1.timeout=> event, then lastUpdated has been updated in timeout handler, the lastUpdate timeout check is useless, should use view check instead.
+		// 2.event=>timeout, then it must haven't timeout, we just need to invalidate the timeout handler.
 		return
 	}
 
@@ -229,9 +228,6 @@ func (n *SimpleNode) onPreCommit(msg Message, allNodes []*SimpleNode) {
 	defer n.mu.Unlock()
 
 	//TODO: validate safetyRoll against late RPC and fetch missed blocks
-	if time.Since(n.lastUpdate) > Timeout {
-		return
-	}
 	if !n.matchingQC(msg.Justify, Prepare) {
 		return
 	}
@@ -267,9 +263,6 @@ func (n *SimpleNode) onCommit(msg Message, allNodes []*SimpleNode) {
 	defer n.mu.Unlock()
 
 	//TODO: validate safetyRoll against late RPC and fetch missed blocks
-	if time.Since(n.lastUpdate) > Timeout {
-		return
-	}
 	if !n.matchingQC(msg.Justify, PreCommit) {
 		return
 	}
@@ -303,9 +296,6 @@ func (n *SimpleNode) onDecideQC(msg Message, allNodes []*SimpleNode) {
 	defer n.mu.Unlock()
 
 	//TODO: validate safetyRoll against late RPC and fetch missed blocks
-	if time.Since(n.lastUpdate) > Timeout {
-		return
-	}
 	// Verify this is a valid commitQC
 	if !n.matchingQC(msg.Justify, Commit) {
 		return
@@ -376,9 +366,7 @@ func (n *SimpleNode) onNewView(msg Message, allNodes []*SimpleNode) {
 
 		// Check if we have enough newview messages, including leader itself
 		if len(n.newViewMsgs[msg.View]) >= n.threshold {
-			if time.Since(n.lastUpdate) < Timeout {
-				n.startNewViewConsensus(msg.View, allNodes)
-			}
+			n.startNewViewConsensus(msg.View, allNodes)
 		}
 	}
 }
@@ -445,9 +433,6 @@ func (n *SimpleNode) broadcast(msg Message, allNodes []*SimpleNode) {
 }
 
 func (n *SimpleNode) onQuorum(view int, blockNumber int, allNodes []*SimpleNode) {
-	if time.Since(n.lastUpdate) > Timeout {
-		return
-	}
 	n.lastUpdate = time.Now()
 
 	fmt.Printf("[Leader %d] onQuorum phase:%v, onView:%v\n", n.ID, n.phase, n.view)
