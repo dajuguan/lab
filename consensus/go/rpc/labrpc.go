@@ -1,15 +1,10 @@
-package main
+package rpc
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"reflect"
 )
-
-func main() {
-	fmt.Println("test")
-}
 
 /*
 network
@@ -63,6 +58,14 @@ func MakeNetwork() *Network {
 		}
 	}()
 	return rn
+}
+
+func (rn *Network) Cleanup() {
+	select {
+	case <-rn.done:
+	default:
+		close(rn.done)
+	}
 }
 
 func (rn *Network) processReq(req reqMsg) {
