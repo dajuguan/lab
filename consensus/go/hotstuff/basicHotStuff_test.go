@@ -54,9 +54,13 @@ then B sendPrepare, but C is evil, C didn't send vote and B'proposal complies wi
 invariants:
 */
 func TestBasicHotStuffLivenessA(t *testing.T) {
+	leaderConf := &BasicLeaderConf{
+		LeaderID:     0,
+		NextLeaderID: 0,
+	}
 	nodes := make([]*SimpleNode, NumNodes)
 	for i := 0; i < NumNodes; i++ {
-		nodes[i] = NewSimpleNode(i)
+		nodes[i] = NewSimpleNode(i, leaderConf)
 	}
 
 	var wg sync.WaitGroup
@@ -67,9 +71,10 @@ func TestBasicHotStuffLivenessA(t *testing.T) {
 		go nodes[i].runConsensus(nodes, &wg)
 	}
 	round := 0
-	leader := nodes[BasicLeader]
+	LeaderID := leaderConf.LeaderID
+	leader := nodes[LeaderID]
 	command := fmt.Sprintf("transaction-%d", round)
-	fmt.Printf("\n---------- Round %d: Leader %d proposes ----------\n", round, BasicLeader)
+	fmt.Printf("\n---------- Round %d: Leader %d proposes ----------\n", round, LeaderID)
 	leader.proposeBlock(command, nodes)
 
 	// Wait for all nodes to commit this block
@@ -95,6 +100,61 @@ func TestBasicHotStuffLivenessA(t *testing.T) {
 		}
 		fmt.Printf("++++++++++All nodes committed block for round %d++++++++++\n", round)
 		leaderBlock = nil
+	}
+
+	// Cleanup
+	for i := 0; i < NumNodes; i++ {
+		nodes[i].kill()
+	}
+
+	wg.Wait()
+}
+
+func TestBasicHotStuffSafetyA(t *testing.T) {
+	nodes := make([]*SimpleNode, NumNodes)
+	leaderConf := &BasicLeaderConf{
+		LeaderID:     0,
+		NextLeaderID: 0,
+	}
+	for i := 0; i < NumNodes; i++ {
+		nodes[i] = NewSimpleNode(i, leaderConf)
+	}
+
+	var wg sync.WaitGroup
+
+	// Start all nodes
+	for i := 0; i < NumNodes; i++ {
+		wg.Add(1)
+		go nodes[i].runConsensus(nodes, &wg)
+	}
+	round := 0
+	// leader := nodes[BasicLeader]
+	// command := fmt.Sprintf("transaction-%d", round)
+	// leader.proposeBlock(command, nodes)
+	leaderID := leaderConf.LeaderID
+	fmt.Printf("\n---------- Round %d: Leader %d proposes ----------\n", round, leaderID)
+
+	// Wait for all nodes to commit this block
+	// Simulate 3 rounds of consensus
+	for round := 0; round < 3; round++ {
+		leaderBlock := <-nodes[leaderID].applyCh
+
+		var wg sync.WaitGroup
+		for i := 0; i < NumNodes; i++ {
+			i := i
+			if i == leaderID {
+				continue
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				block := <-nodes[i].applyCh
+				fmt.Printf("Got Node %d committed block %v\n", i, block.Height)
+				assert.EqualValues(t, leaderBlock, block)
+			}()
+		}
+		wg.Wait()
+		fmt.Printf("++++++++++All nodes committed block for round %d++++++++++\n", round)
 	}
 
 	// Cleanup

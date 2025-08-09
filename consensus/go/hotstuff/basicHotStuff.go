@@ -39,29 +39,34 @@ type SimpleNode struct {
 
 	// Timeout handling
 	newViewTimeoutTimer *time.Timer
+	lastUpdate          time.Time
 
 	// Apply channel for tracking committed blocks
-	applyCh chan *Block
+	applyCh   chan *Block
+	prepareCh chan *Block
+	// simulate networkDelay
+	delay time.Duration
 
 	// Configuration
-	threshold int
-	dead      bool
+	threshold  int
+	dead       bool
+	leaderConf *BasicLeaderConf
+}
+
+type BasicLeaderConf struct {
+	LeaderID     int
+	NextLeaderID int
 }
 
 const (
 	NumNodes   = 4
 	F          = 1
 	QuorumSize = 3
-	NetDelay   = time.Millisecond * 1000
+	NetDelay   = time.Millisecond * 100
 	Timeout    = 4 * NetDelay
 )
 
-var (
-	BasicLeader     = 0
-	BasicNextLeader = 0
-)
-
-func NewSimpleNode(id int) *SimpleNode {
+func NewSimpleNode(id int, leader *BasicLeaderConf) *SimpleNode {
 	node := &SimpleNode{
 		ID:                  id,
 		view:                1,
@@ -73,9 +78,12 @@ func NewSimpleNode(id int) *SimpleNode {
 		msgCh:               make(chan Message, 100),
 		voteCh:              make(chan Vote, 100),
 		applyCh:             make(chan *Block, 100),
+		prepareCh:           make(chan *Block, 100),
+		delay:               time.Duration(5 * time.Millisecond),
 		threshold:           QuorumSize,
 		newViewTimeoutTimer: time.NewTimer(Timeout),
 		dead:                false,
+		leaderConf:          leader,
 	}
 	// Initialize genesis block and highQC
 	genesis := &Block{
@@ -100,7 +108,7 @@ func NewSimpleNode(id int) *SimpleNode {
 
 func (n *SimpleNode) leader(view int) int {
 	// simply use the same leader unless manual changing it
-	return BasicLeader
+	return n.leaderConf.LeaderID
 }
 
 func (n *SimpleNode) isLeader(view int) bool {
@@ -109,7 +117,7 @@ func (n *SimpleNode) isLeader(view int) bool {
 
 func (n *SimpleNode) nextLeader(view int) int {
 	// simply use the same next leader unless manual changing it
-	return BasicNextLeader
+	return n.leaderConf.NextLeaderID
 }
 
 func (n *SimpleNode) isNextleader(view int) bool {
@@ -176,6 +184,10 @@ func (n *SimpleNode) onPrepare(msg Message, allNodes []*SimpleNode) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	if time.Since(n.lastUpdate) > Timeout {
+		return
+	}
+
 	if msg.View < n.view {
 		return
 	}
@@ -188,6 +200,7 @@ func (n *SimpleNode) onPrepare(msg Message, allNodes []*SimpleNode) {
 	n.view = msg.View
 	// Update timer
 	n.newViewTimeoutTimer.Reset(Timeout)
+	n.lastUpdate = time.Now()
 
 	// Send vote to leader
 	vote := Vote{
@@ -199,6 +212,9 @@ func (n *SimpleNode) onPrepare(msg Message, allNodes []*SimpleNode) {
 
 	leaderID := n.leader(msg.View)
 	go func() {
+		if n.delay > 0 {
+			time.Sleep(n.delay)
+		}
 		allNodes[leaderID].voteCh <- vote
 	}()
 }
@@ -212,6 +228,10 @@ func (n *SimpleNode) onPreCommit(msg Message, allNodes []*SimpleNode) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	//TODO: validate safetyRoll against late RPC and fetch missed blocks
+	if time.Since(n.lastUpdate) > Timeout {
+		return
+	}
 	if !n.matchingQC(msg.Justify, Prepare) {
 		return
 	}
@@ -219,6 +239,7 @@ func (n *SimpleNode) onPreCommit(msg Message, allNodes []*SimpleNode) {
 	n.view = msg.View
 	// Update timer
 	n.newViewTimeoutTimer.Reset(Timeout)
+	n.lastUpdate = time.Now()
 	// Process justify QC
 	n.prepareQC = msg.Justify
 
@@ -232,6 +253,10 @@ func (n *SimpleNode) onPreCommit(msg Message, allNodes []*SimpleNode) {
 
 	leaderID := n.leader(msg.View)
 	go func() {
+		n.prepareCh <- msg.Block
+		if n.delay > 0 {
+			time.Sleep(n.delay)
+		}
 		allNodes[leaderID].voteCh <- vote
 	}()
 }
@@ -241,6 +266,10 @@ func (n *SimpleNode) onCommit(msg Message, allNodes []*SimpleNode) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	//TODO: validate safetyRoll against late RPC and fetch missed blocks
+	if time.Since(n.lastUpdate) > Timeout {
+		return
+	}
 	if !n.matchingQC(msg.Justify, PreCommit) {
 		return
 	}
@@ -248,6 +277,7 @@ func (n *SimpleNode) onCommit(msg Message, allNodes []*SimpleNode) {
 	n.view = msg.View
 	// Update timer
 	n.newViewTimeoutTimer.Reset(Timeout)
+	n.lastUpdate = time.Now()
 	n.lockedQC = msg.Justify
 
 	// Send vote
@@ -260,6 +290,9 @@ func (n *SimpleNode) onCommit(msg Message, allNodes []*SimpleNode) {
 
 	leaderID := n.leader(msg.View)
 	go func() {
+		if n.delay > 0 {
+			time.Sleep(n.delay)
+		}
 		allNodes[leaderID].voteCh <- vote
 	}()
 }
@@ -269,6 +302,10 @@ func (n *SimpleNode) onDecideQC(msg Message, allNodes []*SimpleNode) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	//TODO: validate safetyRoll against late RPC and fetch missed blocks
+	if time.Since(n.lastUpdate) > Timeout {
+		return
+	}
 	// Verify this is a valid commitQC
 	if !n.matchingQC(msg.Justify, Commit) {
 		return
@@ -276,6 +313,7 @@ func (n *SimpleNode) onDecideQC(msg Message, allNodes []*SimpleNode) {
 
 	n.view = msg.View
 	n.newViewTimeoutTimer.Reset(Timeout)
+	n.lastUpdate = time.Now()
 
 	// Commit the block locally - this adds block to n.blocks
 	n.commit(msg.Block)
@@ -295,6 +333,9 @@ func (n *SimpleNode) onDecideQC(msg Message, allNodes []*SimpleNode) {
 	// Send newview to new leader
 	newLeaderID := n.leader(n.view)
 	go func() {
+		if n.delay > 0 {
+			time.Sleep(n.delay)
+		}
 		allNodes[newLeaderID].msgCh <- newViewMsg
 	}()
 
@@ -335,20 +376,24 @@ func (n *SimpleNode) onNewView(msg Message, allNodes []*SimpleNode) {
 
 		// Check if we have enough newview messages, including leader itself
 		if len(n.newViewMsgs[msg.View]) >= n.threshold {
-			n.startNewViewConsensus(msg.View, allNodes)
+			if time.Since(n.lastUpdate) < Timeout {
+				n.startNewViewConsensus(msg.View, allNodes)
+			}
 		}
 	}
 }
 
 func (n *SimpleNode) startNewViewConsensus(view int, allNodes []*SimpleNode) {
-	n.phase = Prepare
-	// simulate leader rotation
-	BasicLeader = n.ID
-	BasicNextLeader = n.nextLeader(view)
-	// Clear votes for new consensus
-	n.votes = make(map[int]bool)
 	// Update timer
 	n.newViewTimeoutTimer.Reset(Timeout)
+	n.lastUpdate = time.Now()
+
+	n.phase = Prepare
+	// simulate leader rotation
+	n.leaderConf.LeaderID = n.ID
+	n.leaderConf.NextLeaderID = n.nextLeader(view)
+	// Clear votes for new consensus
+	n.votes = make(map[int]bool)
 
 	// Find highest QC from newview messages
 	var highestQC *QC
@@ -383,7 +428,9 @@ func (n *SimpleNode) startNewViewConsensus(view int, allNodes []*SimpleNode) {
 
 	fmt.Printf("[Leader %d] Starting new view %d with block %v\n", n.ID, view, newBlock.Height)
 	fmt.Printf("\n---------- View %d: Leader %d proposes ----------\n", n.view, n.ID)
-	time.Sleep(NetDelay)
+	if n.delay > 0 {
+		time.Sleep(n.delay)
+	}
 	n.broadcast(prepareMsg, allNodes)
 }
 
@@ -398,6 +445,11 @@ func (n *SimpleNode) broadcast(msg Message, allNodes []*SimpleNode) {
 }
 
 func (n *SimpleNode) onQuorum(view int, blockNumber int, allNodes []*SimpleNode) {
+	if time.Since(n.lastUpdate) > Timeout {
+		return
+	}
+	n.lastUpdate = time.Now()
+
 	fmt.Printf("[Leader %d] onQuorum phase:%v, onView:%v\n", n.ID, n.phase, n.view)
 	block := n.uncommitedBlocks[blockNumber]
 	if block == nil {
@@ -453,12 +505,19 @@ func (n *SimpleNode) onQuorum(view int, blockNumber int, allNodes []*SimpleNode)
 		Sender:  n.ID,
 	}
 	fmt.Printf("[Leader %d] Broadcasting [Phase:%v] for block %v\n", n.ID, nextPhase, block.Height)
+	if n.delay > 0 {
+		time.Sleep(n.delay)
+	}
 	n.broadcast(msg, allNodes)
 }
 
 func (n *SimpleNode) onTimeout(allNodes []*SimpleNode) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
+	if time.Since(n.lastUpdate) < Timeout { // drop expired timeout to avoid race condition with other events
+		return
+	}
 
 	fmt.Printf("[Node %d] Timeout in view %d, advancing to view %d\n", n.ID, n.view, n.view+1)
 
@@ -467,6 +526,7 @@ func (n *SimpleNode) onTimeout(allNodes []*SimpleNode) {
 	n.phase = NewView
 	// Update timer
 	n.newViewTimeoutTimer.Reset(Timeout)
+	n.lastUpdate = time.Now()
 
 	// Send NewView message to new leader according to HotStuff paper
 	newViewMsg := Message{
@@ -530,6 +590,9 @@ func (n *SimpleNode) proposeBlock(command string, allNodes []*SimpleNode) {
 
 	fmt.Printf("[Leader %d] Proposing block %v with command '%s' at view %d\n",
 		n.ID, newBlock.Height, command, n.view)
+	if n.delay > 0 {
+		time.Sleep(n.delay)
+	}
 	n.broadcast(prepareMsg, allNodes)
 }
 
