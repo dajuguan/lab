@@ -43,11 +43,11 @@ type SimpleNode struct {
 
 	// Apply channel for tracking committed blocks
 	syncCh      chan int
-	newViewCh   chan *Message
-	prepareCh   chan *Message
-	preCommitCh chan *Message
-	commitCh    chan *Message
-	decideCh    chan *Message
+	newViewCh   chan *Block
+	prepareCh   chan *Block
+	preCommitCh chan *Block
+	commitCh    chan *Block
+	decideCh    chan *Block
 	// simulate networkDelay
 	delay time.Duration
 
@@ -83,11 +83,11 @@ func NewSimpleNode(id int, leader *BasicLeaderConf) *SimpleNode {
 		msgCh:               make(chan Message, 100),
 		voteCh:              make(chan Vote, 100),
 		syncCh:              make(chan int),
-		newViewCh:           make(chan *Message),
-		prepareCh:           make(chan *Message, 100),
-		preCommitCh:         make(chan *Message, 100),
-		commitCh:            make(chan *Message, 100),
-		decideCh:            make(chan *Message, 100),
+		newViewCh:           make(chan *Block),
+		prepareCh:           make(chan *Block, 100),
+		preCommitCh:         make(chan *Block, 100),
+		commitCh:            make(chan *Block, 100),
+		decideCh:            make(chan *Block, 100),
 		delay:               time.Duration(DefaultDelay),
 		threshold:           QuorumSize,
 		newViewTimeoutTimer: time.NewTimer(Timeout),
@@ -145,6 +145,7 @@ func (n *SimpleNode) createBlock(parent *Block, command string, justify *QC) *Bl
 		Parent:   parent.Height,
 		Command:  command,
 		Proposer: n.ID,
+		View:     n.view,
 		Justify:  justify,
 	}
 	block.Hash = n.blockHash(block)
@@ -179,9 +180,11 @@ func (n *SimpleNode) commit(block *Block) {
 	fmt.Printf("[Node %d] Committing block %v (cmd: %s)\n", n.ID, block.Height, block.Command)
 
 	// Add block to local storage
-	n.blocks[block.Height] = block
-	if n.uncommitedBlocks[block.Height] != nil {
-		delete(n.uncommitedBlocks, block.Height)
+	currentHeight := n.blocks[len(n.blocks)-1].Height
+	for h := currentHeight + 1; h <= block.Height; h++ {
+		// TODO: sync blocks if the node doesn't have the block
+		n.blocks[h] = n.uncommitedBlocks[h]
+		delete(n.uncommitedBlocks, h)
 	}
 }
 
@@ -206,6 +209,7 @@ func (n *SimpleNode) onPrepare(msg Message, allNodes []*SimpleNode) {
 	// Update timer
 	n.newViewTimeoutTimer.Reset(Timeout)
 	n.lastUpdate = time.Now()
+	n.uncommitedBlocks[msg.Block.Height] = msg.Block
 
 	// Send vote to leader
 	vote := Vote{
@@ -219,7 +223,7 @@ func (n *SimpleNode) onPrepare(msg Message, allNodes []*SimpleNode) {
 	if n.delay > 0 {
 		time.Sleep(n.delay)
 	}
-	n.prepareCh <- &msg
+	n.prepareCh <- msg.Block
 	go func() {
 		allNodes[leaderID].voteCh <- vote
 	}()
@@ -258,7 +262,7 @@ func (n *SimpleNode) onPreCommit(msg Message, allNodes []*SimpleNode) {
 	if n.delay > 0 {
 		time.Sleep(n.delay)
 	}
-	n.preCommitCh <- &msg
+	n.preCommitCh <- msg.Block
 	go func() {
 		allNodes[leaderID].voteCh <- vote
 	}()
@@ -292,7 +296,7 @@ func (n *SimpleNode) onCommit(msg Message, allNodes []*SimpleNode) {
 	if n.delay > 0 {
 		time.Sleep(n.delay)
 	}
-	n.commitCh <- &msg
+	n.commitCh <- msg.Block
 	go func() {
 		allNodes[leaderID].voteCh <- vote
 	}()
@@ -320,7 +324,7 @@ func (n *SimpleNode) onDecideQC(msg Message, allNodes []*SimpleNode) {
 	if n.delay > 0 {
 		time.Sleep(n.delay)
 	}
-	n.decideCh <- &msg
+	n.decideCh <- msg.Block
 
 	// Advance to next view and send newview to next leader
 	n.view++
@@ -427,7 +431,7 @@ func (n *SimpleNode) startNewViewConsensus(view int, allNodes []*SimpleNode) {
 
 	fmt.Printf("[Leader %d] Starting new view %d with block %v\n", n.ID, view, newBlock.Height)
 	fmt.Printf("\n---------- View %d: Leader %d proposes ----------\n", n.view, n.ID)
-	n.newViewCh <- &prepareMsg
+	n.newViewCh <- newBlock
 	<-n.syncCh
 	if n.delay > 0 {
 		time.Sleep(n.delay)
@@ -507,7 +511,7 @@ func (n *SimpleNode) onQuorum(view int, blockNumber int, allNodes []*SimpleNode)
 		time.Sleep(n.delay)
 	}
 	if nextPhase == Decide {
-		n.decideCh <- &msg
+		n.decideCh <- block
 	}
 	n.broadcast(msg, allNodes)
 }

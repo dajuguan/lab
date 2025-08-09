@@ -25,28 +25,30 @@ c) 2 follower doesn't respond to Prepare phase, then network recovery
 => every node send newView to leader(currentView+1)
 - how long should the leader wait for the newView: 4δ. δ is maximum network delay.
 invariants:
-- view should increase by 1
-- blockNumber should be the previous highest QC
+- view should increase by 2 from lastedCommit
+- commitedBlockNumber should be the previous highest QC
 
-d) 2 follower does't repond to Pre-Commit phase, then network recovery
+d) 2 follower received prepareQC (QC.h) but didn't respond to Pre-Commit phase, then network recovery
 blockNumber should be the previous highest QC
 invariants:
-- view should increase by 1
-- blockNumber should be the current highest QC
+- view should increase by 2 from lastedCommit
+- commitedBlockNumber should be the current highest QC
 - previous leader shoudn't be locked
+- Qc.h should be committed along with the new proposal
 
 e) 2 follower does't repond to Commit phase, then network recovery
 blockNumber should be the previous highest QC
 invariants:
-- view should increase by 1
-- blockNumber should be the current highest QC
+- view should increase by 2 from lastedCommit
+- commitedBlockNumber should be the current highest QC
+- will commit the previous block + new proposal's block
 - previous leader shoudn't be locked
 
 f) 2 follower does't repond to Pre-Commit phase, then doesn't send newView to the new leader, then network recovery
 blockNumber should be the previous highest QC
 invariants:
-- view should increase by 2
-- blockNumber should be the last highest QC
+- view should increase by 3 from lastedCommit
+- commitedBlockNumber should be the last highest QC
 
 g) during leader A, only follower D receives PrepareQC; then leader B come up, B haven't recieved newView from D, but received 2 newviews from A,C;
 then B sendPrepare, but C is evil, C didn't send vote and B'proposal complies with safetyRule, so D will vote.
@@ -90,9 +92,9 @@ func TestBasicHotStuffLivenessA(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				msg := <-nodes[i].decideCh
-				fmt.Printf("Got Node %d committed block %v\n", i, msg.Block.Height)
-				assert.EqualValues(t, leaderMsg, msg)
+				block := <-nodes[i].decideCh
+				fmt.Printf("Got Node %d committed block %v\n", i, block.Height)
+				assert.EqualValues(t, leaderMsg, block)
 			}()
 		}
 		wg.Wait()
@@ -119,10 +121,10 @@ func runNRound(t *testing.T, round, leaderID int, nodes []*SimpleNode) {
 	}
 }
 
-func lastCommittedMsg(t *testing.T, round, leaderID int, nodes []*SimpleNode) *Message {
-	var lastCommittedMsg *Message
+func lastCommittedBlock(t *testing.T, round, leaderID int, nodes []*SimpleNode) *Block {
+	var lastCommittedBlock *Block
 	for i := 0; i < round; i++ {
-		leaderMsg := <-nodes[leaderID].decideCh
+		leaderBlock := <-nodes[leaderID].decideCh
 		var wg sync.WaitGroup
 		for i := 0; i < NumNodes; i++ {
 			i := i
@@ -132,17 +134,17 @@ func lastCommittedMsg(t *testing.T, round, leaderID int, nodes []*SimpleNode) *M
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				msg := <-nodes[i].decideCh
-				fmt.Printf("Got Node %d committed block %v\n", i, msg.Block.Height)
-				assert.EqualValues(t, leaderMsg.View, msg.View)
-				assert.EqualValues(t, leaderMsg.Block, msg.Block)
+				block := <-nodes[i].decideCh
+				fmt.Printf("Got Node %d committed block %v\n", i, block.Height)
+				assert.EqualValues(t, leaderBlock.View, block.View)
+				assert.EqualValues(t, leaderBlock.Hash, block.Hash)
 			}()
 		}
 		wg.Wait()
-		lastCommittedMsg = leaderMsg
-		fmt.Printf("++++++++++All nodes committed block: %d++++++++++\n", lastCommittedMsg.Block.Height)
+		lastCommittedBlock = leaderBlock
+		fmt.Printf("++++++++++All nodes committed block: %d++++++++++\n", lastCommittedBlock.Height)
 	}
-	return lastCommittedMsg
+	return lastCommittedBlock
 }
 
 func TestBasicHotStuffLivenessC(t *testing.T) {
@@ -172,7 +174,7 @@ func TestBasicHotStuffLivenessC(t *testing.T) {
 	leader.proposeBlock(command, nodes)
 
 	{
-		// leader startNewView:2
+		// leader startNewView:2, block 1 committed
 		<-nodes[leaderID].newViewCh
 		// node 1,2 respond to prepare lately
 		nodes[1].delay = Timeout + NetDelay
@@ -188,9 +190,9 @@ func TestBasicHotStuffLivenessC(t *testing.T) {
 
 	}
 
-	runNRound(t, 1, leaderID, nodes)
-	lastCommitted := lastCommittedMsg(t, 3, leaderID, nodes)
-	assert.Equal(t, 3, lastCommitted.Block.Height)
+	runNRound(t, 1, leaderID, nodes) // block 2 committed
+	lastCommitted := lastCommittedBlock(t, 2, leaderID, nodes)
+	assert.Equal(t, 3, lastCommitted.View)
 
 	<-nodes[leaderID].newViewCh
 	nodes[leaderID].syncCh <- 0
