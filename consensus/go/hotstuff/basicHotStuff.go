@@ -42,8 +42,12 @@ type SimpleNode struct {
 	lastUpdate          time.Time
 
 	// Apply channel for tracking committed blocks
-	applyCh   chan *Block
-	prepareCh chan *Block
+	syncCh      chan int
+	newViewCh   chan *Message
+	prepareCh   chan *Message
+	preCommitCh chan *Message
+	commitCh    chan *Message
+	decideCh    chan *Message
 	// simulate networkDelay
 	delay time.Duration
 
@@ -59,11 +63,12 @@ type BasicLeaderConf struct {
 }
 
 const (
-	NumNodes   = 4
-	F          = 1
-	QuorumSize = 3
-	NetDelay   = time.Millisecond * 100
-	Timeout    = 4 * NetDelay
+	NumNodes     = 4
+	F            = 1
+	QuorumSize   = 3
+	DefaultDelay = 2 * time.Millisecond
+	NetDelay     = time.Millisecond * 100
+	Timeout      = 4 * NetDelay
 )
 
 func NewSimpleNode(id int, leader *BasicLeaderConf) *SimpleNode {
@@ -77,9 +82,13 @@ func NewSimpleNode(id int, leader *BasicLeaderConf) *SimpleNode {
 		newViewMsgs:         make(map[int][]Message),
 		msgCh:               make(chan Message, 100),
 		voteCh:              make(chan Vote, 100),
-		applyCh:             make(chan *Block, 100),
-		prepareCh:           make(chan *Block, 100),
-		delay:               time.Duration(1 * time.Millisecond),
+		syncCh:              make(chan int),
+		newViewCh:           make(chan *Message),
+		prepareCh:           make(chan *Message, 100),
+		preCommitCh:         make(chan *Message, 100),
+		commitCh:            make(chan *Message, 100),
+		decideCh:            make(chan *Message, 100),
+		delay:               time.Duration(DefaultDelay),
 		threshold:           QuorumSize,
 		newViewTimeoutTimer: time.NewTimer(Timeout),
 		dead:                false,
@@ -174,9 +183,6 @@ func (n *SimpleNode) commit(block *Block) {
 	if n.uncommitedBlocks[block.Height] != nil {
 		delete(n.uncommitedBlocks, block.Height)
 	}
-
-	// Send block to applyCh for external tracking
-	n.applyCh <- block
 }
 
 func (n *SimpleNode) onPrepare(msg Message, allNodes []*SimpleNode) {
@@ -210,10 +216,11 @@ func (n *SimpleNode) onPrepare(msg Message, allNodes []*SimpleNode) {
 	}
 
 	leaderID := n.leader(msg.View)
+	if n.delay > 0 {
+		time.Sleep(n.delay)
+	}
+	n.prepareCh <- &msg
 	go func() {
-		if n.delay > 0 {
-			time.Sleep(n.delay)
-		}
 		allNodes[leaderID].voteCh <- vote
 	}()
 }
@@ -248,11 +255,11 @@ func (n *SimpleNode) onPreCommit(msg Message, allNodes []*SimpleNode) {
 	}
 
 	leaderID := n.leader(msg.View)
+	if n.delay > 0 {
+		time.Sleep(n.delay)
+	}
+	n.preCommitCh <- &msg
 	go func() {
-		n.prepareCh <- msg.Block
-		if n.delay > 0 {
-			time.Sleep(n.delay)
-		}
 		allNodes[leaderID].voteCh <- vote
 	}()
 }
@@ -282,10 +289,11 @@ func (n *SimpleNode) onCommit(msg Message, allNodes []*SimpleNode) {
 	}
 
 	leaderID := n.leader(msg.View)
+	if n.delay > 0 {
+		time.Sleep(n.delay)
+	}
+	n.commitCh <- &msg
 	go func() {
-		if n.delay > 0 {
-			time.Sleep(n.delay)
-		}
 		allNodes[leaderID].voteCh <- vote
 	}()
 }
@@ -308,6 +316,12 @@ func (n *SimpleNode) onDecideQC(msg Message, allNodes []*SimpleNode) {
 	// Commit the block locally - this adds block to n.blocks
 	n.commit(msg.Block)
 
+	// Send block to decideCh for external tracking
+	if n.delay > 0 {
+		time.Sleep(n.delay)
+	}
+	n.decideCh <- &msg
+
 	// Advance to next view and send newview to next leader
 	n.view++
 	n.phase = NewView
@@ -323,9 +337,6 @@ func (n *SimpleNode) onDecideQC(msg Message, allNodes []*SimpleNode) {
 	// Send newview to new leader
 	newLeaderID := n.leader(n.view)
 	go func() {
-		if n.delay > 0 {
-			time.Sleep(n.delay)
-		}
 		allNodes[newLeaderID].msgCh <- newViewMsg
 	}()
 
@@ -416,6 +427,8 @@ func (n *SimpleNode) startNewViewConsensus(view int, allNodes []*SimpleNode) {
 
 	fmt.Printf("[Leader %d] Starting new view %d with block %v\n", n.ID, view, newBlock.Height)
 	fmt.Printf("\n---------- View %d: Leader %d proposes ----------\n", n.view, n.ID)
+	n.newViewCh <- &prepareMsg
+	<-n.syncCh
 	if n.delay > 0 {
 		time.Sleep(n.delay)
 	}
@@ -492,6 +505,9 @@ func (n *SimpleNode) onQuorum(view int, blockNumber int, allNodes []*SimpleNode)
 	fmt.Printf("[Leader %d] Broadcasting [Phase:%v] for block %v\n", n.ID, nextPhase, block.Height)
 	if n.delay > 0 {
 		time.Sleep(n.delay)
+	}
+	if nextPhase == Decide {
+		n.decideCh <- &msg
 	}
 	n.broadcast(msg, allNodes)
 }

@@ -2,7 +2,6 @@ package hotstuff
 
 import (
 	"fmt"
-	"reflect"
 	"sync"
 	"testing"
 
@@ -27,7 +26,7 @@ c) 2 follower doesn't respond to Prepare phase, then network recovery
 - how long should the leader wait for the newView: 4δ. δ is maximum network delay.
 invariants:
 - view should increase by 1
-- blockNumber shoule be the previous highest QC
+- blockNumber should be the previous highest QC
 
 d) 2 follower does't repond to Pre-Commit phase, then network recovery
 blockNumber should be the previous highest QC
@@ -71,35 +70,36 @@ func TestBasicHotStuffLivenessA(t *testing.T) {
 		go nodes[i].runConsensus(nodes, &wg)
 	}
 	round := 0
-	LeaderID := leaderConf.LeaderID
-	leader := nodes[LeaderID]
+	leaderID := leaderConf.LeaderID
+	leader := nodes[leaderID]
 	command := fmt.Sprintf("transaction-%d", round)
-	fmt.Printf("\n---------- Round %d: Leader %d proposes ----------\n", round, LeaderID)
+	fmt.Printf("\n---------- Round %d: Leader %d proposes ----------\n", round, leaderID)
 	leader.proposeBlock(command, nodes)
 
 	// Wait for all nodes to commit this block
-	cases := make([]reflect.SelectCase, NumNodes)
-	for i := 0; i < NumNodes; i++ {
-		cases[i] = reflect.SelectCase{
-			Dir:  reflect.SelectRecv,
-			Chan: reflect.ValueOf(nodes[i].applyCh),
-		}
-	}
-	// Simulate 10 rounds of consensus
-	var leaderBlock *Block
+	// Simulate 3 rounds of consensus
 	for round := 0; round < 3; round++ {
-		for commitCount := 0; commitCount < NumNodes; commitCount++ {
-			chosen, value, _ := reflect.Select(cases)
-			block := value.Interface().(*Block)
-			if leaderBlock == nil {
-				leaderBlock = block
-			} else {
-				assert.EqualValues(t, leaderBlock, block)
+		leaderMsg := <-nodes[leaderID].decideCh
+
+		var wg sync.WaitGroup
+		for i := 0; i < NumNodes; i++ {
+			i := i
+			if i == leaderID {
+				continue
 			}
-			fmt.Printf("Got Node %d committed block %v\n", chosen, block.Height)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				msg := <-nodes[i].decideCh
+				fmt.Printf("Got Node %d committed block %v\n", i, msg.Block.Height)
+				assert.EqualValues(t, leaderMsg, msg)
+			}()
 		}
+		wg.Wait()
+
+		<-nodes[leaderID].newViewCh
+		nodes[leaderID].syncCh <- 0
 		fmt.Printf("++++++++++All nodes committed block for round %d++++++++++\n", round)
-		leaderBlock = nil
 	}
 
 	// Cleanup
@@ -110,7 +110,42 @@ func TestBasicHotStuffLivenessA(t *testing.T) {
 	wg.Wait()
 }
 
-func TestBasicHotStuffSafetyA(t *testing.T) {
+// Round consensus for N rounds and return lastCommittedMsg after N rounds
+func runNRound(t *testing.T, round, leaderID int, nodes []*SimpleNode) {
+	for i := 0; i < round; i++ {
+		// consume viewViewCh and syncCh
+		<-nodes[leaderID].newViewCh
+		nodes[leaderID].syncCh <- 0
+	}
+}
+
+func lastCommittedMsg(t *testing.T, round, leaderID int, nodes []*SimpleNode) *Message {
+	var lastCommittedMsg *Message
+	for i := 0; i < round; i++ {
+		leaderMsg := <-nodes[leaderID].decideCh
+		var wg sync.WaitGroup
+		for i := 0; i < NumNodes; i++ {
+			i := i
+			if i == leaderID {
+				continue
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				msg := <-nodes[i].decideCh
+				fmt.Printf("Got Node %d committed block %v\n", i, msg.Block.Height)
+				assert.EqualValues(t, leaderMsg.View, msg.View)
+				assert.EqualValues(t, leaderMsg.Block, msg.Block)
+			}()
+		}
+		wg.Wait()
+		lastCommittedMsg = leaderMsg
+		fmt.Printf("++++++++++All nodes committed block: %d++++++++++\n", lastCommittedMsg.Block.Height)
+	}
+	return lastCommittedMsg
+}
+
+func TestBasicHotStuffLivenessC(t *testing.T) {
 	nodes := make([]*SimpleNode, NumNodes)
 	leaderConf := &BasicLeaderConf{
 		LeaderID:     0,
@@ -123,39 +158,42 @@ func TestBasicHotStuffSafetyA(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Start all nodes
+	// View = 1
 	for i := 0; i < NumNodes; i++ {
 		wg.Add(1)
 		go nodes[i].runConsensus(nodes, &wg)
 	}
 	round := 0
-	// leader := nodes[BasicLeader]
-	// command := fmt.Sprintf("transaction-%d", round)
-	// leader.proposeBlock(command, nodes)
 	leaderID := leaderConf.LeaderID
+	// view=1
+	leader := nodes[leaderID]
+	command := fmt.Sprintf("transaction-%d", round)
 	fmt.Printf("\n---------- Round %d: Leader %d proposes ----------\n", round, leaderID)
+	leader.proposeBlock(command, nodes)
 
-	// Wait for all nodes to commit this block
-	// Simulate 3 rounds of consensus
-	for round := 0; round < 3; round++ {
-		leaderBlock := <-nodes[leaderID].applyCh
+	{
+		// leader startNewView:2
+		<-nodes[leaderID].newViewCh
+		// node 1,2 respond to prepare lately
+		nodes[1].delay = Timeout + NetDelay
+		nodes[2].delay = Timeout + NetDelay
+		nodes[leaderID].syncCh <- 0
 
-		var wg sync.WaitGroup
-		for i := 0; i < NumNodes; i++ {
-			i := i
-			if i == leaderID {
-				continue
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				block := <-nodes[i].applyCh
-				fmt.Printf("Got Node %d committed block %v\n", i, block.Height)
-				assert.EqualValues(t, leaderBlock, block)
-			}()
-		}
-		wg.Wait()
-		fmt.Printf("++++++++++All nodes committed block for round %d++++++++++\n", round)
+		// leader startNewView:3
+		<-nodes[leaderID].newViewCh
+		// node 1,2 restore normal connection in view3
+		nodes[1].delay = DefaultDelay
+		nodes[2].delay = DefaultDelay
+		nodes[leaderID].syncCh <- 0
+
 	}
+
+	runNRound(t, 1, leaderID, nodes)
+	lastCommitted := lastCommittedMsg(t, 3, leaderID, nodes)
+	assert.Equal(t, 3, lastCommitted.Block.Height)
+
+	<-nodes[leaderID].newViewCh
+	nodes[leaderID].syncCh <- 0
 
 	// Cleanup
 	for i := 0; i < NumNodes; i++ {
