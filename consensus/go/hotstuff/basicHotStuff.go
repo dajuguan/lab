@@ -23,7 +23,7 @@ type SimpleNode struct {
 	// HotStuff state - reusing types from hotstuff.go
 	phase            Phase
 	blocks           map[int]*Block
-	uncommitedBlocks map[int]*Block
+	uncommitedBlocks map[int]*Block // TODO: Use a hash-based key to avoid block overwrites in case of reorg.
 	lockedQC         *QC
 	prepareQC        *QC
 
@@ -42,12 +42,14 @@ type SimpleNode struct {
 	lastUpdate          time.Time
 
 	// Apply channel for tracking committed blocks
-	syncCh      chan int
-	newViewCh   chan *Block
-	prepareCh   chan *Block
-	preCommitCh chan *Block
-	commitCh    chan *Block
-	decideCh    chan *Block
+	syncCh          chan int
+	precommitSyncCh chan int
+	commitSyncCh    chan int
+	newViewCh       chan *Block
+	prepareCh       chan *Block
+	preCommitCh     chan *Block
+	commitCh        chan *Block
+	decideCh        chan *Block
 	// simulate networkDelay
 	delay time.Duration
 
@@ -83,7 +85,7 @@ func NewSimpleNode(id int, leader *BasicLeaderConf) *SimpleNode {
 		msgCh:               make(chan Message, 100),
 		voteCh:              make(chan Vote, 100),
 		syncCh:              make(chan int),
-		newViewCh:           make(chan *Block),
+		newViewCh:           make(chan *Block, 100),
 		prepareCh:           make(chan *Block, 100),
 		preCommitCh:         make(chan *Block, 100),
 		commitCh:            make(chan *Block, 100),
@@ -185,6 +187,8 @@ func (n *SimpleNode) commit(block *Block) {
 		// TODO: sync blocks if the node doesn't have the block
 		n.blocks[h] = n.uncommitedBlocks[h]
 		delete(n.uncommitedBlocks, h)
+
+		n.decideCh <- block
 	}
 }
 
@@ -220,10 +224,10 @@ func (n *SimpleNode) onPrepare(msg Message, allNodes []*SimpleNode) {
 	}
 
 	leaderID := n.leader(msg.View)
+	n.prepareCh <- msg.Block
 	if n.delay > 0 {
 		time.Sleep(n.delay)
 	}
-	n.prepareCh <- msg.Block
 	go func() {
 		allNodes[leaderID].voteCh <- vote
 	}()
@@ -247,8 +251,6 @@ func (n *SimpleNode) onPreCommit(msg Message, allNodes []*SimpleNode) {
 	// Update timer
 	n.newViewTimeoutTimer.Reset(Timeout)
 	n.lastUpdate = time.Now()
-	// Process justify QC
-	n.prepareQC = msg.Justify
 
 	// Send vote
 	vote := Vote{
@@ -259,10 +261,14 @@ func (n *SimpleNode) onPreCommit(msg Message, allNodes []*SimpleNode) {
 	}
 
 	leaderID := n.leader(msg.View)
+	n.preCommitCh <- msg.Block
+	if n.precommitSyncCh != nil {
+		<-n.precommitSyncCh
+	}
 	if n.delay > 0 {
 		time.Sleep(n.delay)
 	}
-	n.preCommitCh <- msg.Block
+
 	go func() {
 		allNodes[leaderID].voteCh <- vote
 	}()
@@ -282,7 +288,8 @@ func (n *SimpleNode) onCommit(msg Message, allNodes []*SimpleNode) {
 	// Update timer
 	n.newViewTimeoutTimer.Reset(Timeout)
 	n.lastUpdate = time.Now()
-	n.lockedQC = msg.Justify
+	// Process justify QC
+	n.prepareQC = msg.Justify
 
 	// Send vote
 	vote := Vote{
@@ -293,10 +300,13 @@ func (n *SimpleNode) onCommit(msg Message, allNodes []*SimpleNode) {
 	}
 
 	leaderID := n.leader(msg.View)
+	n.commitCh <- msg.Block
+	if n.commitSyncCh != nil {
+		<-n.commitSyncCh
+	}
 	if n.delay > 0 {
 		time.Sleep(n.delay)
 	}
-	n.commitCh <- msg.Block
 	go func() {
 		allNodes[leaderID].voteCh <- vote
 	}()
@@ -316,6 +326,7 @@ func (n *SimpleNode) onDecideQC(msg Message, allNodes []*SimpleNode) {
 	n.view = msg.View
 	n.newViewTimeoutTimer.Reset(Timeout)
 	n.lastUpdate = time.Now()
+	n.lockedQC = msg.Justify
 
 	// Commit the block locally - this adds block to n.blocks
 	n.commit(msg.Block)
@@ -324,8 +335,6 @@ func (n *SimpleNode) onDecideQC(msg Message, allNodes []*SimpleNode) {
 	if n.delay > 0 {
 		time.Sleep(n.delay)
 	}
-	n.decideCh <- msg.Block
-
 	// Advance to next view and send newview to next leader
 	n.view++
 	n.phase = NewView
@@ -411,10 +420,15 @@ func (n *SimpleNode) startNewViewConsensus(view int, allNodes []*SimpleNode) {
 	// Create new block
 	parent := n.blocks[0]
 	if highestQC != nil {
-		if block, exists := n.blocks[highestQC.Block]; exists {
+		if block, exists := n.uncommitedBlocks[highestQC.Block]; exists {
 			parent = block
+		} else {
+			if block, exists := n.blocks[highestQC.Block]; exists {
+				parent = block
+			}
 		}
 	}
+	fmt.Printf("[Leader %d] Starting new view %d with highQC view: %v, bn: %v\n", n.ID, view, highestQC.View, parent.Height)
 
 	command := fmt.Sprintf("new-cmd-%d", view)
 	newBlock := n.createBlock(parent, command, highestQC)
@@ -490,9 +504,11 @@ func (n *SimpleNode) onQuorum(view int, blockNumber int, allNodes []*SimpleNode)
 	case PreCommit:
 		n.phase = Commit
 		nextPhase = n.phase
+		n.prepareQC = qc
 	case Commit:
 		// Send commitQC to followers so they can commit the block
 		nextPhase = Decide
+		n.lockedQC = qc
 		// Leader also commits the block locally
 		n.commit(block)
 		n.phase = NewView
@@ -509,9 +525,6 @@ func (n *SimpleNode) onQuorum(view int, blockNumber int, allNodes []*SimpleNode)
 	fmt.Printf("[Leader %d] Broadcasting [Phase:%v] for block %v\n", n.ID, nextPhase, block.Height)
 	if n.delay > 0 {
 		time.Sleep(n.delay)
-	}
-	if nextPhase == Decide {
-		n.decideCh <- block
 	}
 	n.broadcast(msg, allNodes)
 }

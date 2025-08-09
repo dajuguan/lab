@@ -17,6 +17,7 @@ const (
 
 type Block struct {
 	Height   int    `json:"height"`
+	View     int    `json:"view"`
 	Hash     string `json:"hash"`
 	Parent   int    `json:"parent"`
 	Command  string `json:"command"`
