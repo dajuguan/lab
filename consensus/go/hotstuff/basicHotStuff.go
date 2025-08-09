@@ -23,7 +23,7 @@ type SimpleNode struct {
 	// HotStuff state - reusing types from hotstuff.go
 	phase            Phase
 	blocks           map[int]*Block
-	uncommitedBlocks map[int]*Block // TODO: Use a hash-based key to avoid block overwrites in case of reorg.
+	uncommitedBlocks map[int]*Block // TODO: Use a hash-based key to avoid block overwrites in case of reorg; Sync blocks if these blocks are missing for the node
 	lockedQC         *QC
 	prepareQC        *QC
 

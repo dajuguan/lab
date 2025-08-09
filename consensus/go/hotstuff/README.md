@@ -18,3 +18,6 @@
 
 ## Q: leader何时resetTimer?
 - 每次进入下一个阶段才重置，而不是每次收到follower的消息才重置timer，否则leader可能永远不会意识到自己超时了
+
+## Q: Commit阶段，follower已经设置过prepareQC，但是相应leader超时，那么prepareQC是否应该被commit？
+- 该prepareQC对应的Block应该随着new Proposal被一起commit
