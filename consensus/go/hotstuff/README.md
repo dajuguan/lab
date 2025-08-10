@@ -21,3 +21,9 @@
 
 ## Q: Commit阶段，follower已经设置过prepareQC，但是相应leader超时，那么prepareQC是否应该被commit？
 - 该prepareQC对应的Block应该随着new Proposal被一起commit
+
+
+## References:
+- [HotStuff to HotStuff2](https://www.youtube.com/watch?v=CeNqZdiEI5Q)
+- [One phase HotStuff: HotStuff-1](https://www.youtube.com/watch?v=7KINgvBNk1U)
+- [HotStuff 工程设计与实现](https://mp.weixin.qq.com/s/Vs6P8bjr-vKjpq9gaQJV2w)
