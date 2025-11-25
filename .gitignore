@@ -3,3 +3,4 @@
 
 *.json
 *.txt
+kv-db/bench_pebble_*/*
