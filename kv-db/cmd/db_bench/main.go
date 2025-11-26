@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/pebble"
 )
@@ -34,9 +35,10 @@ var v = flag.Int("v", 3, "verbosity")
 var handles = flag.Int("handles", 0, "max open files")
 var cache = flag.Int("cache", 512, "cache size")
 var dbn = flag.Int("dbn", 1, "number of dbs")
-var dbFlag = flag.String("db", "goleveldb", "db type: goleveldb, pebble, simple, pebblev2")
+var dbFlag = flag.String("db", "pebble", "db type: pebble, simple, pebblev2")
 var valueFlag = flag.String("V", "fnv", "value generator: fnv, simple")
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
+var pooledHash = flag.Bool("pooledHash", false, "use hash pool")
 
 type KeyValueStore interface {
 	ethdb.KeyValueReader
@@ -83,17 +85,22 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
+	var endfix string
+	if *pooledHash {
+		endfix = "pooled"
+	}
+
 	dbs := make([]KeyValueStore, *dbn)
 	for i := 0; i < *dbn; i++ {
 		var db KeyValueStore
 		var err error
 		// cache = 512 is borrowed from https://github.com/QuarkChain/op-geth/blob/aa013db3d548c34e87063c72bed6777ada0fa2ae/eth/ethconfig/config.go#L57
 		if *dbFlag == "pebble" {
-			db, err = pebble.New(fmt.Sprintf("bench_pebble_%d_%d", *dbSize, i), *cache, *handles, "", false)
+			db, err = pebble.New(fmt.Sprintf("bench_pebble_%d_%s_%d", *dbSize, endfix, i), *cache, *handles, "", false)
 		} else if *dbFlag == "simple" {
-			db, err = simple_db.NewDatabase(fmt.Sprintf("bench_simple_%d_%d", *dbSize, i))
+			db, err = simple_db.NewDatabase(fmt.Sprintf("bench_simple_%d_%s_%d", *dbSize, endfix, i))
 		} else if *dbFlag == "pebblev2" {
-			db, err = pebble_v2.New(fmt.Sprintf("bench_pebblev2_%d_%d", *dbSize, i), *cache, *handles)
+			db, err = pebble_v2.New(fmt.Sprintf("bench_pebblev2__%d_%s_%d", *dbSize, endfix, i), *cache, *handles)
 		} else {
 			panic("Unknow db")
 		}
@@ -116,8 +123,10 @@ func main() {
 	if *op == "write" || *op == "randwrite" {
 		tsize := *n / int64(*t)
 
+		fmt.Println("generating keys...")
 		keys := generateKeys()
 
+		fmt.Println("start writing data...")
 		startTime = time.Now()
 		var wg sync.WaitGroup
 		for ti := 0; ti < *t; ti++ {
@@ -130,11 +139,17 @@ func main() {
 			go func(ti int, keys []int64) {
 				defer wg.Done()
 				for i := 0; i < len(keys); i++ {
-					hfunc := sha256.New()
-					buf := make([]byte, 8)
-					binary.BigEndian.PutUint64(buf, uint64(keys[i]))
-					hfunc.Write(buf)
-					key := hfunc.Sum(nil)
+					buf := [8]byte{}
+					binary.BigEndian.PutUint64(buf[:], uint64(keys[i]))
+					var key []byte
+					if *pooledHash {
+						key = crypto.Keccak256Hash(buf[:]).Bytes()
+
+					} else {
+						hfunc := sha256.New()
+						hfunc.Write(buf[:])
+						key = hfunc.Sum(nil)
+					}
 
 					valueSize := keys[i]%int64(*valueSizeBig-*valueSizeSmall) + int64(*valueSizeSmall)
 
@@ -166,8 +181,10 @@ func main() {
 	} else if *op == "read" || *op == "randread" {
 		tsize := *n / int64(*t)
 
+		fmt.Println("generating keys...")
 		keys := generateKeys()
 
+		fmt.Println("start reading data...")
 		startTime = time.Now()
 		var wg sync.WaitGroup
 		for ti := 0; ti < *t; ti++ {
@@ -180,11 +197,17 @@ func main() {
 			go func(ti int, keys []int64) {
 				defer wg.Done()
 				for i := 0; i < len(keys); i++ {
-					hfunc := sha256.New()
-					buf := make([]byte, 8)
-					binary.BigEndian.PutUint64(buf, uint64(keys[i]))
-					hfunc.Write(buf)
-					key := hfunc.Sum(nil)
+					buf := [8]byte{}
+					binary.BigEndian.PutUint64(buf[:], uint64(keys[i]))
+					var key []byte
+					if *pooledHash {
+						key = crypto.Keccak256Hash(buf[:]).Bytes()
+
+					} else {
+						hfunc := sha256.New()
+						hfunc.Write(buf[:])
+						key = hfunc.Sum(nil)
+					}
 
 					valueSize := keys[i]%int64(*valueSizeBig-*valueSizeSmall) + int64(*valueSizeSmall)
 
