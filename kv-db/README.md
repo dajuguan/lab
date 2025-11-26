@@ -7,3 +7,8 @@ go run cmd/db_bench/main.go -t 32 -op randread -n 10000000 -S 170 --keys 2000000
 100000: 620K IOPS, CPU 65%
 
 128 kB memory allocation overhead: ~60ns, per IO time: 3 us, so the performance increase is 2%.
+
+
+# Some designs
+READAT => pread sync I/O
+I/O size: LevelOptions {BlockSize: 4096}  4kb
