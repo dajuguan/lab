@@ -1,6 +1,8 @@
 # TCP多路复用
 - TCP本身stream是全双工的，但是TCP的本身并不提供多stream并发，必须按照字节流交付
 - 所以TCP multiplexing一般指的是端口复用：不同应用可以同时用同一 IP，通过不同端口通信
+
+Example: 模拟http的req/resp串行处理模式: `client.py server.py`
 ## TCP应用层多路复用
 - HTTP1.1基于TCP，但是因为没有frame/stream-id的概念，所以只能串行处理
 - HTTP/2 frame + stream-id、Yamux frame + stream-id、QUIC stream则在同一个TCP连接/QUIC链接中同时处理多个链接请求
