@@ -183,6 +183,22 @@ func main() {
 
 		fmt.Println("generating keys...")
 		keys := generateKeys()
+		hashKeys := make([][]byte, len(keys))
+		// precalculate hash
+		for i, key := range keys {
+			buf := [8]byte{}
+			binary.BigEndian.PutUint64(buf[:], uint64(key))
+			var hash []byte
+			if *pooledHash {
+				hash = crypto.Keccak256Hash(buf[:]).Bytes()
+
+			} else {
+				hfunc := sha256.New()
+				hfunc.Write(buf[:])
+				hash = hfunc.Sum(nil)
+			}
+			hashKeys[i] = hash
+		}
 
 		fmt.Println("start reading data...")
 		startTime = time.Now()
@@ -197,17 +213,7 @@ func main() {
 			go func(ti int, keys []int64) {
 				defer wg.Done()
 				for i := 0; i < len(keys); i++ {
-					buf := [8]byte{}
-					binary.BigEndian.PutUint64(buf[:], uint64(keys[i]))
-					var key []byte
-					if *pooledHash {
-						key = crypto.Keccak256Hash(buf[:]).Bytes()
-
-					} else {
-						hfunc := sha256.New()
-						hfunc.Write(buf[:])
-						key = hfunc.Sum(nil)
-					}
+					key := hashKeys[int64(ti)*tsize+int64(i)]
 
 					valueSize := keys[i]%int64(*valueSizeBig-*valueSizeSmall) + int64(*valueSizeSmall)
 
