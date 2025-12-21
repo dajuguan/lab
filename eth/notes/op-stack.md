@@ -100,3 +100,10 @@ What is reorg? Local node accept two or more difference forked chains.
 What is L2 finalized block? The L1 block that includes the L2 block is finalized.
 - 如果首先sequencer在L2 finalized之前广播了错误的区块，其他nodes不会接受（即不会添加到本地的链上），所以不涉及reorg
 - 如果sequencer广播了正确的L2区块儿，其所属的L1区块finalize之后又再次提交了L2区块号相同但内容不同的区块儿，也不会被其他节点接受（在derivation的时候就发现了）
+
+### Sequencer采用EL sync导致出现sequencer重启后RPC node无法sunc的坑
+假设A是当前sequencer，B采用EL sync
+- 此时A收到了交易并打包为unsafe block提交给B，此时B采用EL sync会把[finalized区块号设置为该unsafe block number N](https://github.com/ethereum-optimism/optimism/blob/c0d1ce8a27e5349c04d258dc3d4619b73cca7685/op-node/rollup/engine/engine_controller.go#L547-L556);
+- A宕机(unsafe blocks还没被L1 finalize)，然后B上线切换为sequencer，此时B会从N+1开始提交span batch，但是其他节点此时finalized可能还是n (N>n)，导致B的交易被drop掉
+
+[issue](https://github.com/QuarkChain/pm/issues/110), [alan's note](https://github.com/zhiqiangxu/private_notes/blob/main/misc/elsync_safe_head_drift.md)
