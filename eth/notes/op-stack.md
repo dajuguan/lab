@@ -51,7 +51,7 @@ https://github.com/wevm/viem/blob/a59b5630311249031c7bbfdbcc093dd52586a5bf/src/o
         }
     }
 
-
+- disable withdraw solution: https://github.com/QuarkChain/optimism/pull/49
 ```
 
 > So, [archive node](https://docs.optimism.io/chain-operators/guides/management/best-practices#op-proposer-assumes-archive-mode) must be used for L2 withdraw.
@@ -75,5 +75,20 @@ https://github.com/wevm/viem/blob/a59b5630311249031c7bbfdbcc093dd52586a5bf/src/o
     )
 ```
 - The balance of the from account MUST be increased by the amount of mint (msg.value). This is unconditional, and does not revert on deposit failure.
+- address alias is used to prevent l1假冒L2地址的情况，即L1合约地址与L2某个地址一致但是实际上部署的代码完全不一样，这导致如果有其他L2合约需要依赖msg.sender判断就会导致被攻击
+    - 通过控制create2的salt来枚举是有可能伪造出地址相同但代码不同的合约
 
 ### How to filter invalid msg sent to Batch Inbox Address
+- Through batcher address
+
+### Sequencer, Batcher, Proposer, Challenger
+- Sequencer: receives L2 transactions from L2 users, creates L2 blocks using them, which it then submits to data availability provider (via a batcher). The sequencer’s address is not recorded on-chain; only the batcher’s address is. Users and node operators typically obtain the sequencer’s RPC endpoint from the chain operator.
+    - run op-node with `--sequencer.enabled --rpc.port=8547`
+- Batcher(BatchSubmitter): submits batches of transactions to L1 (可以控制99%的L2交易，还有1%可以通过L1 deposit tx来到L2)
+    - run op-batcher with `--rollup.rpc=http://localhost:8547` to **pull** unsafe blocks and publish these to L1
+- Proposer: 
+    - [legency](https://github.com/ethereum-optimism/optimism/pull/13489/changes#diff-54cffe8f94a25ed0cfb98c27cc49d91713dfe2312cd62f2d5f567142687be81c): submit l2 output root
+    - with fault proof: creates a dispute game for batch of blocks:
+    `create(uint32 _gameType,bytes32 _rootClaim,bytes _extraData)`
+- Challenger
+    - run op-challenger with a funded private key and submitting attack tx when false outputroots are found.
