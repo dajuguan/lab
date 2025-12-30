@@ -13,6 +13,30 @@ go run cmd/db_bench/main.go -t 32 -op randread -n 10000000 -S 170 --keys 2000000
 READAT => pread sync I/O
 I/O size: LevelOptions {BlockSize: 4096}  4kb
 
+## threads impact (max parallization ~2N threads, N is physical cores)
+Run on AX101: 32 CORE 126G memory (stoped services which using large io/cpu/memory)
+Total ops:
+
+Init KVs 2,000,000,000
+10,000,000 ops random read
+handle 100000
+Code path: https://github.com/ping-ke/research/tree/main/zig_rocksdb/code
+
+| Threads            | kvs_bench        | bench_go_eth_pebble | bench_zig_rocksdb |
+|--------------------|------------------|---------------------|-------------------|
+| DB size            | 285G             | 236G                | 235G              |
+| DB files           | 8487             | 16975               | 5321              |
+| 8 threads read *   | 73192 ops/s      | 77279 ops/s         | 76462 ops/s       |
+| 16 threads read *  | 126254 ops/s     | 122177 ops/s        | 123728 ops/s      |
+| 32 threads read *  | 174494 ops/s     | 156452 ops/s        | 152604 ops/s      |
+| 64 threads read *  | 172560 ops/s     | 151742 ops/s        | 177550 ops/s      |
+| 16 threads read    | 141675 ops/s     | 164244 ops/s        | 146804 ops/s      |
+| 32 threads read    | 230928 ops/s     | 276273 ops/s        | 232852.78 ops/s   |
+| 64 threads read    | 193903 ops/s     | 178536 ops/s        | 186397 ops/s      |
+
+
+## cache impact
+https://ethresear.ch/t/demystifying-blockchain-kv-lookups-from-o-log-n-to-o-1-disk-i-o
 
 ## pebbleV1 read routine 
 - [getInternal](https://github.com/cockroachdb/pebble/blob/3622ade60459e2b3b9c6f3b36be3a212fa07b848/db.go#L535)
