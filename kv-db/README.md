@@ -34,6 +34,9 @@ Code path: https://github.com/ping-ke/research/tree/main/zig_rocksdb/code
 | 32 threads read    | 230928 ops/s     | 276273 ops/s        | 232852.78 ops/s   |
 | 64 threads read    | 193903 ops/s     | 178536 ops/s        | 186397 ops/s      |
 
+thread context switch time(S)、切换次数(N)、单次I/O时间T的关系:
+切换成本占比= S*N/T
+一般而言SSD单词I/O成本是1000ns, 线程切换成本在250ns左右，因此切换成本占比=N/4，所以当N是CPU物理核心的4倍时已经没有任何额外的增益了。
 
 ## cache impact
 https://ethresear.ch/t/demystifying-blockchain-kv-lookups-from-o-log-n-to-o-1-disk-i-o
