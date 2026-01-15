@@ -15,28 +15,57 @@ I/O size: LevelOptions {BlockSize: 4096}  4kb
 
 ## threads impact (max parallization ~2N threads, N is physical cores)
 Run on AX101: 32 CORE 126G memory (stoped services which using large io/cpu/memory)
-Total ops:
 
-Init KVs 2,000,000,000
-10,000,000 ops random read
-handle 100000
+Total ops:
+- Init KVs 2,000,000,000
+- 10,000,000 ops random read
+- file handles 100000
+
+### Keping's results
 Code path: https://github.com/ping-ke/research/tree/main/zig_rocksdb/code
 
-| Threads            | kvs_bench        | bench_go_eth_pebble | bench_zig_rocksdb |
-|--------------------|------------------|---------------------|-------------------|
-| DB size            | 285G             | 236G                | 235G              |
-| DB files           | 8487             | 16975               | 5321              |
-| 8 threads read *   | 73192 ops/s      | 77279 ops/s         | 76462 ops/s       |
-| 16 threads read *  | 126254 ops/s     | 122177 ops/s        | 123728 ops/s      |
-| 32 threads read *  | 174494 ops/s     | 156452 ops/s        | 152604 ops/s      |
-| 64 threads read *  | 172560 ops/s     | 151742 ops/s        | 177550 ops/s      |
-| 16 threads read    | 141675 ops/s     | 164244 ops/s        | 146804 ops/s      |
-| 32 threads read    | 230928 ops/s     | 276273 ops/s        | 232852.78 ops/s   |
-| 64 threads read    | 193903 ops/s     | 178536 ops/s        | 186397 ops/s      |
+Results: https://github.com/QuarkChain/TenGPS-research/issues/17
+
+pebbledb:
+- DB size: 236G
+- DB files: 16975
+
+rocksdb:
+- DB size: 235G
+- DB files: 5321
+
+| Benchmark                | bench_go_eth_pebble        | bench_zig_rocksdb                  |
+|--------------------------|----------------------------|------------------------------------|
+| 32 threads read (Cold)   | 286,286 ops/s (40%)        | 264,207 ops/s (40%)                |
+| 64 threads read (Cold)   | 297,291 ops/s (40%)        | 292,888 ops/s ~ 383,616 ops/s (97%)|
+| 32 threads read (Warm)   | 349,687 ops/s (50%)        | 322,686 ops/s (60% → 70%)          |
+| 64 threads read (Warm)   | 363,662 ops/s (50%)        | 352,660 ops/s ~ 420,651 ops/s (98%)|
 
 thread context switch time(S)、切换次数(N)、单次I/O时间T的关系:
 切换成本占比= S*N/T
 一般而言SSD单词I/O成本是1000ns, 线程切换成本在250ns左右，因此切换成本占比=N/4，所以当N是CPU物理核心的4倍时已经没有任何额外的增益了。
+
+### ioareana benchmark by me
+Code: https://github.com/dajuguan/ioarena
+- key: 16bytes
+- value: 32 bytes
+- entries: 1.6B (~84G rocksdb, ~128G mdbx)
+
+校正数据:
+| Threads | DB      | IOPS (Kops/s) | Avg Latency (µs) | CPU Usage (%) |
+|--------:|---------|--------------:|-----------------:|--------------:|
+|  2      | RocksDB |     12        |       160        |      1.1      |
+|  2      | MDBX    |     21        |        85        |      0.8      |
+|  4      | RocksDB |     30        |       130        |      2.2      |
+|  4      | MDBX    |     48        |        84        |      1.3      |
+|  8      | RocksDB |     85        |        92        |      4.5      |
+|  8      | MDBX    |     97        |        83        |      2.5      |
+| 16      | RocksDB |    180        |        90        |      8        |
+| 16      | MDBX    |    180        |        86        |      6        |
+| 32      | RocksDB |    300        |       110        |      24       |
+| 32      | MDBX    |    360        |        90        |      13       |
+| 64      | RocksDB |    350(不准确)        |       100        |      45       |
+| 64      | MDBX    |    800        |        80        |      33       |
 
 ## cache impact
 https://ethresear.ch/t/demystifying-blockchain-kv-lookups-from-o-log-n-to-o-1-disk-i-o
