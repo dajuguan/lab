@@ -121,3 +121,9 @@ total txs: 4874075
     - [State Root Calculation for Engine Payloads](https://github.com/paradigmxyz/reth/blob/main/crates/engine/tree/docs/root.md#state-root-task)
     - [Spawn state root task](https://github.com/paradigmxyz/reth/blob/75ca54b79039a98701df82a9817cf869e92ef588/crates/engine/tree/src/tree/mod.rs#L2443)
     - [erigon ](https://github.com/erigontech/erigon/blob/main/docs/programmers_guide/guide.md)
+
+
+## Parallel merkerlization
+- https://github.com/Galxe/gravity-reth/pull/113
+    - https://github.com/Galxe/gravity-reth/blob/5225b8c34fb61e808a61390d9f6cf35f06cffefb/docs/benchmark/gravity-reth-063025.md
+    - https://github.com/Galxe/gravity-reth/commit/8aa01c593b6ab18559bd58a17c932d97494c37e3
