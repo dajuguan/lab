@@ -373,3 +373,138 @@ L5 外围工具层：
 2. 对抗性：注入恶意/冲突消息，验证阻断与恢复路径。
 3. 恢复性：在 finalize 前后注入崩溃，验证重启恢复点正确。
 4. 兼容性：对涉及编码/存储格式的对象运行 conformance 校验。
+
+## 8. Consensus 模块专项（子模块关系、语义保证与串联）
+
+本节聚焦 `commonware-consensus` 内部，而非全仓库横向视角。目标是回答三件事：
+
+1. 各子模块分别保证什么语义。
+2. 为什么可以正交拆分。
+3. 运行时如何串起来（含函数级启动时序）。
+
+### 8.1 正交分解（按职责与不变量）
+
+在 `consensus` 内可抽象为 5 个正交子域：
+
+1. C1 协议接口层（`consensus/src/lib.rs`、`consensus/src/types.rs`）  
+定义跨实现契约：`Automaton`、`CertifiableAutomaton`、`Relay`、`Reporter`、`Monitor` 与 `Epoch/View/Round/Height`。
+2. C2 协议执行层（`consensus/src/simplex/*`）  
+负责 BFT 推进、投票、证书形成与 view 切换，不关心 payload 业务语义。
+3. C3 结果整形层（`consensus/src/marshal/*`）  
+负责把共识证书流 + 区块数据流整理为应用可消费的有序 finalized block 流。
+4. C4 应用适配层（`consensus/src/application/marshaled.rs`）  
+负责把业务 `Application` 适配为共识可调用接口，同时把区块 propose/verify/certify 与 marshal 打通。
+5. C5 旁路协议层（`consensus/src/aggregation/*`、`consensus/src/ordered_broadcast/*`）  
+提供与 `simplex` 并列的其他一致性原语，不属于 `simplex + marshal` 主链内部实现。
+
+这套分解成立的关键是“不变量不重叠”：
+
+1. C2 只负责“协议安全与活性推进规则”。
+2. C3 只负责“最终块交付语义（有序、可回填、ack 驱动）”。
+3. C4 只负责“应用语义接入与上下文桥接”。
+
+### 8.2 各子模块的语义保证（Guarantees）
+
+#### 8.2.1 C1 协议接口层
+
+1. `Automaton::propose/verify` 定义应用与共识的边界，不泄露共识内部状态机细节。
+2. `CertifiableAutomaton::certify` 定义“notarization 后、finalization 前”的提交闸门；要求诚实节点判定确定性一致。
+3. `Relay`/`Reporter` 把传播和观测从共识核心逻辑中解耦。
+4. `Epoch/View/Round/Height` 提供协议时序主键和算术安全边界。
+
+#### 8.2.2 C2 `simplex` 协议执行层
+
+1. 在拜占庭模型下推进 `notarize/nullify/finalize` 流程，形成可验证证书。
+2. 通过 `Batcher + Voter + Resolver` 三 actor 管线解耦验签、状态推进、缺失拉取。
+3. 对外只依赖 trait 能力：应用通过 `Automaton`，网络通过 sender/receiver，并行通过 `Strategy`。
+4. 通过 WAL 恢复参与状态，避免重启后产生违反协议的行为。
+
+#### 8.2.3 C3 `marshal` 结果整形层
+
+1. 提供 `Update::Tip` 与 `Update::Block` 两类输出，块按高度单调有序交付（无高度空洞）。
+2. 交付语义为 at-least-once，允许重复，要求应用侧去重。
+3. 通过 ack 机制推进“已处理高度”，以显式确认替代隐式成功。
+4. 遇到缺块可 backfill，确保最终能把 finalized 链补齐后再顺序下发。
+5. 证书与块持久化后支持重启恢复。
+
+#### 8.2.4 C4 `application::Marshaled` 适配层
+
+1. 将应用封装为 `Automaton + CertifiableAutomaton + Relay + Reporter`。
+2. 在 `verify` 与 `certify` 路径间实现延迟验证/复用验证任务，减少关键路径阻塞。
+3. 做 epoch 边界处理（边界重提案、上下文一致性检查）。
+4. 通过 `marshal::Mailbox` 完成区块订阅、上报 `proposed/verified`、父块获取与祖先流构建。
+
+### 8.3 核心规格（结构体 + 公开函数）
+
+#### 8.3.1 `simplex` 侧
+
+1. `simplex::Config`：协议参数总线（timeout、fetch、journal、strategy 等）。
+2. `simplex::Engine::new(context, cfg)`：构造 `Batcher/Voter/Resolver` 三 actor。
+3. `simplex::Engine::start(vote_network, certificate_network, resolver_network)`：启动三通道协议循环。
+
+#### 8.3.2 `marshal` 侧
+
+1. `marshal::Config`：provider/epocher、持久化与回填窗口参数。
+2. `marshal::Actor::init(context, finalizations_by_height, finalized_blocks, cfg)`：恢复状态并返回 `(Actor, Mailbox, processed_height)`。
+3. `marshal::Actor::start(application, buffer, resolver)`：启动整理与交付循环（内部 `run`）。
+4. `marshal::Mailbox`：跨模块入口，含 `proposed/verified/subscribe/get_block/get_finalization/set_floor/prune/hint_finalized`。
+
+#### 8.3.3 `Marshaled` 侧
+
+1. `Marshaled::new(context, application, marshal_mailbox, epocher)`：绑定应用与 marshal。
+2. `impl Automaton for Marshaled`：`genesis/propose/verify`。
+3. `impl CertifiableAutomaton for Marshaled::certify`：finalize 前闸门。
+4. `impl Relay for Marshaled::broadcast`：将已构建区块经 marshal 发往广播层。
+
+### 8.4 子模块如何串起来（主链）
+
+主链可抽象为：
+
+`Application`  
+-> `Marshaled(Automaton/CertifiableAutomaton/Relay)`  
+-> `simplex::Engine`（共识推进）  
+-> `Reporter`（通常为 `marshal::Mailbox`）  
+-> `marshal::Actor`（有序 finalized 输出）  
+-> `Application::report(Update::Tip/Update::Block)`
+
+对应接线点（以 `examples/reshare` 为例）：
+
+1. 在 `enter_epoch` 中构造 `simplex::Engine`，注入 `automaton/relay = application(Marshaled)`、`reporter = marshal::Mailbox`。
+2. `simplex` 产生活动后调用 `Reporter::report`，`marshal::Mailbox` 将 `Notarization/Finalization` 转成内部 mailbox message。
+3. `Marshaled` 在 propose/verify/certify 过程中通过 `marshal::Mailbox` 订阅区块、上报已验证区块与提议区块。
+4. `marshal::Actor` 汇合证书流与区块流，形成有序 finalized 交付。
+
+### 8.5 启动时序图（函数级）
+
+下面给出一版函数级启动时序（省略错误分支）：
+
+```text
+orchestrator::Actor::enter_epoch(epoch, scheme)
+  -> simplex::Engine::new(scope, simplex::Config { ... })
+  -> simplex::Engine::start(vote_net, cert_net, resolver_net)
+     -> spawn Engine::run(...)
+        -> batcher.start(voter_mailbox, vote_receiver, certificate_receiver)
+        -> resolver.start(voter_mailbox, resolver_sender, resolver_receiver)
+        -> voter.start(batcher_mailbox, resolver_mailbox, vote_sender, certificate_sender)
+
+marshal::Actor::init(...)
+  -> 恢复缓存/元数据/归档状态
+  -> 返回 (marshal_actor, marshal_mailbox, processed_height)
+marshal::Actor::start(application_reporter, broadcast_buffer, resolver_mailbox)
+  -> spawn marshal::Actor::run(...)
+     -> select_loop! 处理:
+        - 共识活动消息（notarization/finalization）
+        - 区块可用性消息（proposed/verified/subscribe）
+        - backfill 与修复
+        - Update::Tip / Update::Block 有序下发与 ack 推进
+```
+
+### 8.6 设计结论（面向演进）
+
+`consensus` 当前主链是“协议推进（simplex）”与“结果整形（marshal）”双核结构：
+
+1. `simplex` 负责“达成一致”。
+2. `marshal` 负责“把一致结果转成应用可用数据流”。
+3. `Marshaled` 负责“把业务语义接入这条链并保持边界清晰”。
+
+因此性能优化、协议细节调整、应用逻辑演进可以在不跨层破坏契约的前提下局部进行。
