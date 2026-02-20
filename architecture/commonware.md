@@ -508,3 +508,82 @@ marshal::Actor::start(application_reporter, broadcast_buffer, resolver_mailbox)
 3. `Marshaled` 负责“把业务语义接入这条链并保持边界清晰”。
 
 因此性能优化、协议细节调整、应用逻辑演进可以在不跨层破坏契约的前提下局部进行。
+
+## 9. Actor + Mailbox 编排范式（commonware consensus / network / dkg / reth executor）
+
+本节从工程编排视角总结当前 `commonware-node` 的主架构范式：
+
+`接口边界（trait） + actor 状态封装 + mailbox 消息驱动 + runtime 调度`。
+
+### 9.1 设计目标
+
+该范式要解决的核心问题不是“模块如何静态分层”，而是“在并发与分布式不确定性下，如何稳定推进状态机”。
+
+1. 通过 mailbox 将外部并发调用转化为 actor 内部可控时序。
+2. 通过消息协议替代共享可变状态，降低锁耦合与竞态风险。
+3. 通过 reporter/relay 将共识推进、网络传播、执行层落地解耦。
+
+### 9.2 组件角色分工（按 actor）
+
+1. `consensus/application` actor：
+- 实现 `Automaton/Relay` 语义入口（`genesis/propose/verify/broadcast`）。
+- 负责把共识请求翻译为执行层可执行动作（EL payload build/validate）。
+
+2. `epoch/manager` actor：
+- 负责 epoch 生命周期（enter/exit）。
+- 在收到 DKG 输出后构造并启动 `simplex::Engine`。
+- 通过 vote/certificate/resolver 子通道 mux 管理多 epoch 通信。
+
+3. `dkg/manager` actor：
+- 驱动 DKG 轮次并在边界高度推进下一 epoch 配置。
+- 通过 mailbox 指令触发 `epoch_manager.enter/exit`。
+
+4. `marshal` actor（commonware-consensus）：
+- 汇总 finalization 与区块可得性，形成有序 finalized block 流。
+- 通过 `Reporter` 将 `Tip/Block` 更新分发给 epoch manager、executor、dkg manager 等。
+
+5. `executor` actor（reth 执行桥）：
+- 接收 finalized/tip 更新并驱动 EL 的 forkchoice 与链头同步。
+- 与 application actor 分工：application 侧偏 propose/verify，executor 侧偏 finalized state 推进。
+
+6. `peer_manager`/`broadcast`/resolver actor：
+- 提供网络成员、广播缓冲、缺块拉取与修复能力。
+- 作为共识主状态机的“通信与可得性基础设施”。
+
+### 9.3 典型消息链路（端到端）
+
+1. 网络层收到消息 -> 经 channel 进入对应 actor mailbox。
+2. `dkg_manager` 基于 finalized 进度与链上信息决定 epoch 迁移 -> 发送 `enter/exit` 给 `epoch_manager`。
+3. `epoch_manager` 启动/停止 `simplex`，并将 application mailbox 注入 `automaton/relay`。
+4. `simplex` 推进后经 reporter 上报 `marshal`。
+5. `marshal` 有序产出 `Update::Tip/Update::Block`，并分发到：
+- `executor`（驱动 EL 状态）
+- `dkg_manager`（驱动下一轮 DKG）
+- `epoch_manager`（软进入/追赶）
+6. `application` 在 propose/verify 中调用 reth 引擎句柄，完成 payload 构建与校验。
+
+### 9.4 与“仅接口分层”的区别
+
+该范式强调：
+
+1. trait 只定义“能力边界”；
+2. actor+mailbox 定义“并发与时序边界”；
+3. runtime 定义“调度与生命周期边界”。
+
+三者叠加后，才能在复杂链路中同时满足：可替换、可测试、可恢复、可观测。
+
+### 9.5 适用性与代价
+
+适用性：
+
+1. 高并发状态机系统（共识、网络、执行桥接）。
+2. 需要明确失败域和恢复边界的系统。
+
+代价：
+
+1. 接线复杂，消息类型与 mailbox 较多。
+2. 调试需要跨 actor 跟踪时序，而非单函数调用栈。
+
+### 9.6 一句话架构总结
+
+`接口定义能力边界，actor + mailbox 定义并发与时序边界，runtime 提供统一调度与可测试执行语义。`
