@@ -1,9 +1,12 @@
 package concurrentmodes
 
 /*
+执行模型：决定系统如何实现。
+一个线程如何调度任务的机制，不规定任务的并发安全。
+解决多个task什么时候被执行，关注时间调度。
 - One global queue
 - One processing loop
-- Shared state (balance), No isolation
+- Shared state (doesn't enforce memory isolation in event loop), No isolation
 - Single-threaded execution model
 */
 
