@@ -594,6 +594,29 @@ BeaconChain / ForkChoice / Store
 - 验证：压测 API 任务队列与事件流，确认返回 overload 与 dropped message 注释。
 - 观测：HTTP 5xx/429、请求延迟分位、SSE dropped 消息计数。
 
+## 13. 架构评审增强
+
+本节用于把“架构结论”提升为“可评审证据”。仍保持概要设计粒度，不进入参数调优与运维细节。
+
+### 13.1 关键取舍证据（ADR 摘要）
+TODO
+### 13.2 关键场景走读（E2E）
+TODO
+### 13.3 需求-架构映射（可追踪性）
+
+| 需求ID | 需求摘要 | 架构落点 | 关键章节 |
+|---|---|---|---|
+| FR-1 | 共识规则执行与一致性 | `consensus/types` `state_processing` `fork_choice` | 2.2 / 4.1 / 8.1 |
+| FR-2 | 链处理与同步推进 | `beacon_chain` `network` `sync` | 2.2 / 3.2 / 4.2 / 9 |
+| FR-3 | 执行层协同与回退 | `execution_layer` `beacon_chain` | 2.2 / 4.4 / 11.3 |
+| FR-4 | 对外 API 与观测 | `http_api` `http_metrics` `common/metrics` | 2.2 / 4.6 / 11.4 |
+| FR-5 | 存储与恢复 | `store` `beacon_chain` | 2.2 / 4.5 / 8.2 |
+| NFR-1 | Correctness first | 核心-外围分层 + 单路径推进 | 2.3 / 3 / 4 |
+| NFR-2 | Resilience | 超时/限流/重试/降级/fallback | 2.3 / 11 / 12 |
+| NFR-3 | Observability | metrics/health/API 可见性 | 2.3 / 3.3 / 4.6 / 12 |
+
+### 13.4 演进边界（何时局部改，何时跨层评审）
+TODO
 
 ## References
 
