@@ -5,6 +5,27 @@
 - Lighthouse 架构入口：[`developers_architecture.md`](https://github.com/sigp/lighthouse/blob/stable/book/src/developers_architecture.md)
 - Lighthouse workspace/crate 结构（`Cargo.toml` 与各子模块 `Cargo.toml`）
 
+## Scope / Non-goals
+
+本稿定位为“架构分析 + 概要设计”，用于明确系统边界、子系统职责、关键数据流与失败语义分层，不作为实现与运维手册。
+
+`In scope`
+- 子系统拆分与职责边界。
+- 核心调用链路与事件流编排。
+- 失败处理策略的架构级归纳（网络/同步/执行/API）。
+
+`Out of scope`
+- 具体阈值参数（如限流数值、超时预算的生产值）。
+- SLO/SLA、值班流程、告警路由、责任人分配。
+- 压测方案细节、实验设计与逐项验收脚本。
+- 版本升级/回滚 runbook 与变更管理流程。
+
+## 0. 分析基线（当前版本）
+
+1. Lighthouse 仓库基线 commit：`edba56b9a654cea555cb0db2e8d0712525686973`（short: `edba56b9a`）。
+2. 本文中的代码路径与行号均以该 commit 为准；后续代码变更可能导致行号漂移。
+3. 若行号失效，优先用符号名（`pub struct`/`trait`/`fn`）和文件路径回溯定位。
+
 ## 1. 为什么要做 Lighthouse 的架构分析
 
 Lighthouse 是一个长期演进的以太坊共识客户端，变化来源多且频繁：
@@ -504,7 +525,7 @@ BeaconChain / ForkChoice / Store
 结论：两者“系统骨架相似”，差别主要在“业务状态机语义”，而不是并发与调度架构。
 
 
-## 11. 失败处理策略（代码级，1页版）
+## 11. 失败处理策略
 
 ### 11.1 网络层
 
@@ -546,6 +567,35 @@ BeaconChain / ForkChoice / Store
 3. 执行层主策略是“健康状态机 + 超时控制 + builder/local 双路径回退”。
 4. API层主策略是“过载快速失败 + 流式通道背压降级”。
 
+
+## 12. 失败策略验证矩阵（最小集）
+
+1. 网络层
+- 策略：RPC 限流/并发限制/超时。
+- 代码：`beacon_node/lighthouse_network/src/rpc/mod.rs:48`、`beacon_node/lighthouse_network/src/rpc/self_limiter.rs:133`、`beacon_node/lighthouse_network/src/rpc/handler.rs:43`。
+- 验证：构造 burst 请求与并发请求，观察 `RateLimited`、排队延迟与超时错误。
+- 观测：RPC 错误率、队列长度、连接断开率。
+
+2. 同步层
+- 策略：批处理重试上限 + lookup 防卡死 prune。
+- 代码：`beacon_node/network/src/sync/range_sync/chain.rs:47`、`beacon_node/network/src/sync/block_lookups/mod.rs:917`。
+- 验证：注入持续失败 peer 与缺失组件，确认到达上限后降级/丢弃并能继续推进。
+- 观测：`SYNC_LOOKUPS_STUCK`、batch 失败计数、sync 进度停滞时长。
+
+3. 执行层
+- 策略：EL 健康状态机 + builder fallback 本地 EL。
+- 代码：`beacon_node/execution_layer/src/engines.rs:46`、`beacon_node/execution_layer/src/lib.rs:1051`、`beacon_node/execution_layer/src/lib.rs:1084`。
+- 验证：模拟 relay 失败、EL 超时、EL offline，确认回退与恢复路径。
+- 观测：EL 请求错误率、fallback 触发次数、payload 获取耗时。
+
+4. API 层
+- 策略：过载快速失败 + SSE 背压降级不终止。
+- 代码：`beacon_node/http_api/src/task_spawner.rs:160`、`beacon_node/http_api/src/lib.rs:3208`。
+- 验证：压测 API 任务队列与事件流，确认返回 overload 与 dropped message 注释。
+- 观测：HTTP 5xx/429、请求延迟分位、SSE dropped 消息计数。
+
+
 ## References
+
 - [Beacon Chain Fork Choice](https://github.com/ethereum/consensus-specs/blob/v0.12.1/specs/phase0/fork-choice.md#handlers)
 - [Beacon chain state transition function](https://github.com/ethereum/consensus-specs/blob/v0.12.1/specs/phase0/beacon-chain.md#beacon-chain-state-transition-function)
