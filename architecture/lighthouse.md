@@ -504,6 +504,48 @@ BeaconChain / ForkChoice / Store
 结论：两者“系统骨架相似”，差别主要在“业务状态机语义”，而不是并发与调度架构。
 
 
+## 11. 失败处理策略（代码级，1页版）
+
+### 11.1 网络层
+
+1. RPC 协议级限流（按 peer + protocol 配额）：`beacon_node/lighthouse_network/src/rpc/rate_limiter.rs:82`、`beacon_node/lighthouse_network/src/rpc/config.rs:103`。
+2. 出站自限流与延迟发送（SelfRateLimiter）：`beacon_node/lighthouse_network/src/rpc/self_limiter.rs:35`、`beacon_node/lighthouse_network/src/rpc/self_limiter.rs:84`。
+3. 出站并发上限与短等待重试（100ms）：`beacon_node/lighthouse_network/src/rpc/self_limiter.rs:32`、`beacon_node/lighthouse_network/src/rpc/self_limiter.rs:133`。
+4. 入站响应限流（ResponseLimiter + DelayQueue）：`beacon_node/lighthouse_network/src/rpc/response_limiter.rs:30`、`beacon_node/lighthouse_network/src/rpc/response_limiter.rs:54`。
+5. 入站同协议并发硬上限（每 peer 每协议最多 2）：`beacon_node/lighthouse_network/src/rpc/mod.rs:48`、`beacon_node/lighthouse_network/src/rpc/mod.rs:446`。
+6. 子流超时与协商失败重试（10s 超时，IO 重试 3 次）：`beacon_node/lighthouse_network/src/rpc/handler.rs:43`、`beacon_node/lighthouse_network/src/rpc/handler.rs:413`、`beacon_node/lighthouse_network/src/rpc/handler.rs:1077`。
+7. 编解码边界防护（snappy/SSZ/长度上限，恶意帧拒绝）：`beacon_node/lighthouse_network/src/rpc/codec.rs:170`、`beacon_node/lighthouse_network/src/rpc/codec.rs:449`、`beacon_node/lighthouse_network/src/types/pubsub.rs:85`。
+8. Peer 信誉惩罚与封禁（Low/Mid/High/Fatal -> disconnect/ban）：`beacon_node/lighthouse_network/src/peer_manager/peerdb/score.rs:48`、`beacon_node/lighthouse_network/src/peer_manager/mod.rs:237`、`beacon_node/lighthouse_network/src/peer_manager/mod.rs:263`。
+9. 连接入口防护（IP ban、坏分数拒绝、连接上限）：`beacon_node/lighthouse_network/src/peer_manager/network_behaviour.rs:180`、`beacon_node/lighthouse_network/src/peer_manager/network_behaviour.rs:198`、`beacon_node/lighthouse_network/src/peer_manager/network_behaviour.rs:205`。
+10. Gossip 失败分级处理（Reject/Ignore + 罚分 + reprocess）：`beacon_node/network/src/network_beacon_processor/gossip_methods.rs:163`、`beacon_node/network/src/network_beacon_processor/gossip_methods.rs:2211`、`beacon_node/network/src/network_beacon_processor/gossip_methods.rs:2427`。
+11. Discovery 防刷与封禁参数（请求超时/重试/ban duration）：`beacon_node/lighthouse_network/src/config.rs:293`、`beacon_node/lighthouse_network/src/config.rs:314`、`beacon_node/lighthouse_network/src/config.rs:327`。
+
+### 11.2 同步层
+
+1. Range/Backfill 批处理重试上限（下载与处理分离计数）：`beacon_node/network/src/sync/range_sync/chain.rs:47`、`beacon_node/network/src/sync/range_sync/chain.rs:51`、`beacon_node/network/src/sync/backfill_sync/mod.rs:49`、`beacon_node/network/src/sync/backfill_sync/mod.rs:53`。
+2. Lookup 防卡死与内存上界（max attempts/max lookups/stuck prune）：`beacon_node/network/src/sync/block_lookups/mod.rs:63`、`beacon_node/network/src/sync/block_lookups/mod.rs:78`、`beacon_node/network/src/sync/block_lookups/mod.rs:917`。
+3. EE 离线时同步降级（拒绝新请求 + 丢弃部分活动请求 + 恢复后 resume）：`beacon_node/network/src/sync/manager.rs:1047`、`beacon_node/network/src/sync/manager.rs:1070`、`beacon_node/network/src/sync/manager.rs:1082`。
+4. Custody 列下载失败策略（列级重试、peer 尝试上限、无 peer 超时失败）：`beacon_node/network/src/sync/network_context/custody.rs:20`、`beacon_node/network/src/sync/network_context/custody.rs:234`、`beacon_node/network/src/sync/network_context/custody.rs:376`、`beacon_node/network/src/sync/network_context/custody.rs:379`。
+
+### 11.3 执行层
+
+1. Engine 状态机与健康探测（Online/Offline/Syncing/AuthFailed）：`beacon_node/execution_layer/src/engines.rs:28`、`beacon_node/execution_layer/src/engines.rs:46`、`beacon_node/execution_layer/src/engines.rs:234`。
+2. Engine API 超时预算（按方法不同 timeout）：`beacon_node/execution_layer/src/engine_api/http.rs:26`、`beacon_node/execution_layer/src/engine_api/http.rs:38`、`beacon_node/execution_layer/src/engine_api/http.rs:50`、`beacon_node/execution_layer/src/engine_api/http.rs:657`。
+3. Builder 失败回退本地 EL（chain health 检查 + fallback）：`beacon_node/execution_layer/src/lib.rs:1051`、`beacon_node/execution_layer/src/lib.rs:1084`。
+4. 已知坏块硬拒绝（invalid block roots）：`beacon_node/beacon_chain/src/beacon_chain.rs:3326`、`beacon_node/beacon_chain/src/chain_config.rs:115`。
+
+### 11.4 API层
+
+1. API 任务过载快速失败（beacon_processor 通道满/关闭直接返回错误）：`beacon_node/http_api/src/task_spawner.rs:160`、`beacon_node/http_api/src/task_spawner.rs:197`、`beacon_node/http_api/src/task_spawner.rs:208`。
+2. SSE 背压下不终止连接（丢消息并显式提示 dropped N）：`beacon_node/http_api/src/lib.rs:3208`。
+
+### 11.5 分层结论
+
+1. 网络层主策略是“限流 + 超时 + 惩罚 + 断连/封禁 + 解码边界保护”。
+2. 同步层主策略是“重试上限 + 卡死清理 + 离线降级 + 细粒度重试”。
+3. 执行层主策略是“健康状态机 + 超时控制 + builder/local 双路径回退”。
+4. API层主策略是“过载快速失败 + 流式通道背压降级”。
+
 ## References
 - [Beacon Chain Fork Choice](https://github.com/ethereum/consensus-specs/blob/v0.12.1/specs/phase0/fork-choice.md#handlers)
 - [Beacon chain state transition function](https://github.com/ethereum/consensus-specs/blob/v0.12.1/specs/phase0/beacon-chain.md#beacon-chain-state-transition-function)
