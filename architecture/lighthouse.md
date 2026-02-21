@@ -139,6 +139,14 @@ Lighthouse 是一个长期演进的以太坊共识客户端，变化来源多且
 2. `state_processing`：按 slot/epoch/block 的状态处理入口。
 3. `fork_choice`：头部选择与相关状态更新接口。
 
+失败语义
+1. 典型失败
+- 规则实现偏差、fork 兼容分支遗漏、边界条件处理错误。
+2. 检测信号
+- spec/vector 测试失败、跨客户端不一致、状态根/头选择异常。
+3. 恢复责任与策略
+- 责任主体：`consensus/*`；策略：拒绝不确定输入、保持确定性输出、通过回归向量修复后再放行。
+
 ### 4.2 `beacon_node/beacon_chain`
 
 责任
@@ -149,6 +157,14 @@ Lighthouse 是一个长期演进的以太坊共识客户端，变化来源多且
 1. 仅将通过共识规则验证的数据推进为可见链状态。
 2. 与 `store`、`network`、`execution_layer` 的交互保持顺序与一致性。
 
+失败语义
+1. 典型失败
+- 导入流水线卡顿、EL/网络依赖超时、重组路径顺序错误。
+2. 检测信号
+- 导入延迟上升、head 长时间不推进、任务队列堆积。
+3. 恢复责任与策略
+- 责任主体：`beacon_chain` 编排层；策略：超时/重试/降级、保持单一真值推进点、避免并行路径直接改 canonical 状态。
+
 ### 4.3 `network` / `lighthouse_network`
 
 责任
@@ -157,6 +173,14 @@ Lighthouse 是一个长期演进的以太坊共识客户端，变化来源多且
 不变量
 1. 网络输入不会绕过核心验证直接写入 canonical 状态。
 2. 同步策略变化不改变共识语义。
+
+失败语义
+1. 典型失败
+- 恶意或损坏消息、peer 抖动、同步请求超时或乱序。
+2. 检测信号
+- 解码失败率升高、peer 惩罚计数上升、同步往返时间异常。
+3. 恢复责任与策略
+- 责任主体：`lighthouse_network` + `network` + `sync`；策略：丢弃/降权/断连、请求重试、把可疑输入隔离在验证前。
 
 ### 4.4 `execution_layer`
 
@@ -167,6 +191,14 @@ Lighthouse 是一个长期演进的以太坊共识客户端，变化来源多且
 1. EL 交互失败时系统可降级且不破坏共识正确性。
 2. 执行数据接入必须经过共识侧最终约束。
 
+失败语义
+1. 典型失败
+- Engine API 超时、payload 获取失败、builder 结果不可用。
+2. 检测信号
+- EL 请求错误率上升、提块路径降级触发、执行相关延迟超预算。
+3. 恢复责任与策略
+- 责任主体：`execution_layer`；策略：超时与退避重试、fallback 到本地执行路径、不得绕过共识约束写入链状态。
+
 ### 4.5 `store`
 
 责任
@@ -176,6 +208,14 @@ Lighthouse 是一个长期演进的以太坊共识客户端，变化来源多且
 1. 存储后端可替换，但上层语义一致。
 2. 崩溃恢复后链状态满足一致性约束。
 
+失败语义
+1. 典型失败
+- 写放大导致延迟抖动、落盘失败、崩溃后索引不完整。
+2. 检测信号
+- I/O 延迟突增、数据库错误、恢复阶段校验失败。
+3. 恢复责任与策略
+- 责任主体：`store`；策略：原子写入与一致性校验、重启恢复重建索引、必要时只读降级以保护已确认数据。
+
 ### 4.6 `http_api` / `http_metrics`
 
 责任
@@ -184,6 +224,14 @@ Lighthouse 是一个长期演进的以太坊共识客户端，变化来源多且
 不变量
 1. API 不直接修改共识真值。
 2. 指标与状态反映运行时事实，且与核心流程解耦。
+
+失败语义
+1. 典型失败
+- 外部请求洪泛、慢查询拖垮线程、观测链路回压影响主流程。
+2. 检测信号
+- API p95/p99 升高、429/5xx 增多、metrics 导出超时。
+3. 恢复责任与策略
+- 责任主体：`http_api` / `http_metrics`；策略：限流与超时隔离、只读优先、观测失败不反向阻塞共识主链路。
 
 ## 5. 关键设计决策与风险控制
 
@@ -212,7 +260,7 @@ Lighthouse 是一个长期演进的以太坊共识客户端，变化来源多且
 3. 为 `beacon_chain` 做子域收敛（导入管线、提块管线、同步管线）并定义边界接口。
 4. 建立故障场景回归集：EL 不可用、网络分区、重启恢复、长回填。
 
-## 7. 参考依据（仓库证据）
+## 7. 核心参考仓库
 
 1. 架构文档入口：`lighthouse/book/src/developers_architecture.md`。
 2. workspace 模块分布：`lighthouse/Cargo.toml`。
@@ -454,3 +502,8 @@ BeaconChain / ForkChoice / Store
 3. 对外协作不同：CL 需要与 EL 协同保证共识推进；EL 主要向 CL/JSON-RPC 提供执行结果与查询服务。
 
 结论：两者“系统骨架相似”，差别主要在“业务状态机语义”，而不是并发与调度架构。
+
+
+## References
+- [Beacon Chain Fork Choice](https://github.com/ethereum/consensus-specs/blob/v0.12.1/specs/phase0/fork-choice.md#handlers)
+- [Beacon chain state transition function](https://github.com/ethereum/consensus-specs/blob/v0.12.1/specs/phase0/beacon-chain.md#beacon-chain-state-transition-function)

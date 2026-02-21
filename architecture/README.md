@@ -37,6 +37,7 @@
 1. 纵向分解（主链）  
 按业务顺序和数据流串联输入 -> 核心处理 -> 输出整形。  
 `consensus` 主链是：`Application -> Marshaled -> simplex -> marshal -> Application(report)`。
+- 如果是事件驱动或者Actor模型，需要把对应的消息链路和接口也描述出来
 2. 横向分解（旁路）  
 把与主链并列但不嵌入主状态机的能力单独建模。  
 `aggregation`、`ordered_broadcast` 属于并列旁路协议原语。
@@ -63,3 +64,4 @@
 # 参考架构review
 - [commonware](./commonware.md)
 - [tempo](./tempo.md)
+- [lighthouse](./lighthouse.md)
