@@ -108,3 +108,30 @@ traverse index 1 -> branch node：
   fnext.idx → chunk 2
   read_node_blocking → switch to chunk 2 to read the node data
 ```
+
+
+# Antchain LETUS Review
+
+1. **关于 Long I/O Path 的论证**
+
+   LETUS 对“长 I/O 路径”的批评主要基于传统 HashDB + MPT 架构。在现代客户端（如基于 PathDB/FlatDB 的实现）中，最新状态读取已退化为单次 KV 查询，不再需要遍历中间 trie 节点。因此，该问题在现实系统中已显著缓解。
+
+   同时，在多版本场景下，LETUS 仍需读取 base page 并 replay delta pages，其读取路径本质上并不短，只是结构不同，因此并未从根本上消除读取复杂度。
+
+2. **关于 I/O 放大与空间放大的讨论**
+
+   PathDB 虽无法避免 LSM 结构带来的 compaction，但可以通过 batch write 与结构优化显著缓解写放大。LETUS 将全局 LSM compaction 转换为 page 级局部合并，但在丢弃历史版本或回收空间时，仍然需要 page 重写，本质上仍存在 rewrite 成本。
+
+   因此，LETUS 改变了放大的形态和粒度，但并未消除写放大这一根本问题。
+
+3. **关于 Hash 随机性导致的 I/O 问题**
+
+   LETUS 对 hash-based key schema 的批评主要针对 HashDB 模式。在 PathDB 中，key 即 trie path，具备前缀局部性，不再具有完全随机分布特性。因此，随机写导致的严重 I/O 带宽问题在现代实现中已被显著缓解。
+
+## 总体判断
+
+LETUS 的设计在架构层面具有重构意义，但其对传统区块链存储问题的批评，在现代客户端优化（尤其是 PathDB）背景下，部分前提已经弱化。因此，其性能优势可能更多体现在工程形态与可控性上，而非数量级的性能提升。
+
+## References
+- Blog: https://zan.top/web3/resources/blog/LETUS%3A-A-Log-Structured-Efficient-Trusted-Universal-Blockchain-Storage-20240923
+- Paper: LETUS: A Log-Structured Efficient Trusted Universal BlockChain Storage
