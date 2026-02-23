@@ -3,7 +3,7 @@ This module provides a basic implementation of the XMSS signature scheme, which 
 It's not secure for production use and is intended for educational purposes only.
 The (height, Winternitz w) are important parameters that affect the security and performance of the scheme.
 - The height determines the number of signatures that can be generated (2^height),
-- the Winternitz parameter w determines the WOTS parameters, the larger the w:
+- the Winternitz parameter w determines the WOTS parameters, the larger the w (bits is log2(w)):
     - the smaller the WOTS signatures
     - it changes the signing/verification per-chunk chain split (sign uses x, verify uses w - 1 - x), which is balanced by the checksum digits
     - with checksum digits, total chain budget is parameter-constrained; larger w still usually reduces parallelism because there are fewer independent chunks.
@@ -30,7 +30,7 @@ type HashFe<FF> = [FF; MESSAGE_LEN_FE];
 pub trait XmssHashOps {
     type Field: Field + PrimeCharacteristicRing + PrimeField64 + Copy + Eq + Send + Sync;
 
-    fn winternitz_w(&self) -> usize;
+    fn winternitz_w(&self) -> usize; // Winternitz parameter w for WOTS, bits is log2(w)
     fn hash_one_in_place(&self, input: &mut HashFe<Self::Field>);
     fn hash_pair_in_place(&self, left: &mut HashFe<Self::Field>, right: &HashFe<Self::Field>);
 
@@ -225,8 +225,8 @@ pub struct XmssPublicKey<FF: Field> {
 }
 
 pub struct XmssSecretKey<FF: Field> {
-    height: usize,
-    signing_keys: Vec<HashFe<FF>>,     // One-time secret keys per leaf
+    height: usize, // 2-arity merkle tree height, determines the number of signatures (2^height)
+    signing_keys: Vec<HashFe<FF>>, // One-time secret keys per leaf
     leaf_public_keys: Vec<HashFe<FF>>, // Cached leaf public keys (Merkle leaves)
 }
 
@@ -277,6 +277,7 @@ impl XmssHashOps for PoseidonXmssEngine {
     }
 
     fn hash_one_in_place(&self, input: &mut HashFe<Self::Field>) {
+        // simple wrapper around the Poseidon permutation, we use a 16-element state and only fill the first MESSAGE_LEN_FE elements with the input, the rest are zero. This is not a secure way to use Poseidon and is just for demonstration purposes.
         let mut state = [Self::Field::ZERO; 16];
         state[..MESSAGE_LEN_FE].copy_from_slice(input);
         self.poseidon16.permute_mut(&mut state);
