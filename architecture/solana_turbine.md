@@ -12,6 +12,13 @@
   - `turbine/src/sigverify_shreds.rs`
   - `turbine/src/xdp.rs`
 
+## Deprecated 说明（避免误解）
+
+- docs.rs 上 `solana_turbine` 的 deprecated，指的是 crate/API 组织方式在迁移（并入 Agave 的 unstable API feature开关），不是 Turbine 协议在网络层被替换。
+- 在当前代码中，`turbine` crate 由 `#![cfg(feature = "agave-unstable-api")]` 门控；未开启该 feature 时该 crate 不参与编译。
+- 因此应区分：
+  API 层 deprecated != turbine模块儿被停用。
+
 ## Scope / Non-goals
 
 本稿聚焦两件事：
