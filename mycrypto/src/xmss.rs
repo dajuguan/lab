@@ -28,14 +28,12 @@ pub trait XmssHashOps {
     fn hash_one_in_place(&self, input: &mut HashFe<Self::Field>);
     fn hash_pair_in_place(&self, left: &mut HashFe<Self::Field>, right: &HashFe<Self::Field>);
 
-    fn keygen<const HEIGHT: usize, R: Rng>(
+    fn keygen<R: Rng>(
         &self,
         rng: &mut R,
-    ) -> (
-        XmssPublicKey<Self::Field>,
-        XmssSecretKey<HEIGHT, Self::Field>,
-    ) {
-        let leaf_count = 1usize << HEIGHT;
+        height: usize,
+    ) -> (XmssPublicKey<Self::Field>, XmssSecretKey<Self::Field>) {
+        let leaf_count = 1usize << height;
         let mut signing_keys = Vec::with_capacity(leaf_count);
         // simulate the generation of random field elements for signing keys, in practice this should be done securely.
         for _ in 0..leaf_count {
@@ -50,6 +48,7 @@ pub trait XmssHashOps {
         }
 
         let sk = XmssSecretKey {
+            height,
             signing_keys,
             leaf_public_keys,
         };
@@ -181,12 +180,17 @@ pub struct XmssPublicKey<FF: Field> {
     root: HashFe<FF>, // Root of the Merkle tree
 }
 
-pub struct XmssSecretKey<const HEIGHT: usize, FF: Field> {
+pub struct XmssSecretKey<FF: Field> {
+    height: usize,
     signing_keys: Vec<HashFe<FF>>,     // One-time secret keys per leaf
     leaf_public_keys: Vec<HashFe<FF>>, // Cached leaf public keys (Merkle leaves)
 }
 
-impl<const HEIGHT: usize, FF: Field> XmssSecretKey<HEIGHT, FF> {
+impl<FF: Field> XmssSecretKey<FF> {
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
     pub fn signing_key_at(&self, index: usize) -> &HashFe<FF> {
         &self.signing_keys[index]
     }
@@ -208,9 +212,15 @@ pub struct PoseidonXmssEngine {
 
 impl Default for PoseidonXmssEngine {
     fn default() -> Self {
+        Self::new(DEFAULT_CHUNK_WIDTH)
+    }
+}
+
+impl PoseidonXmssEngine {
+    pub fn new(chunk_width: usize) -> Self {
         Self {
             poseidon16: default_koalabear_poseidon2_16(),
-            chunk_width: DEFAULT_CHUNK_WIDTH,
+            chunk_width,
         }
     }
 }
@@ -251,9 +261,11 @@ pub trait XmssSignatureScheme {
     type PublicKey;
     type SecretKey;
     type Signature;
-    const HEIGHT: usize;
-
-    fn keygen<R: Rng>(rng: &mut R, engine: &Self::Engine) -> (Self::PublicKey, Self::SecretKey);
+    fn keygen<R: Rng>(
+        rng: &mut R,
+        engine: &Self::Engine,
+        height: usize,
+    ) -> (Self::PublicKey, Self::SecretKey);
     fn sign(
         message: &[u8; MESSAGE_LEN], // message is the hash of the original arbitrary message
         secret_key: &Self::SecretKey,
@@ -267,18 +279,21 @@ pub trait XmssSignatureScheme {
     ) -> bool;
 }
 
-pub struct SimpleXmssScheme<const HEIGHT: usize>;
+pub struct SimpleXmssScheme;
 
-impl<const HEIGHT: usize> XmssSignatureScheme for SimpleXmssScheme<HEIGHT> {
+impl XmssSignatureScheme for SimpleXmssScheme {
     type Engine = PoseidonXmssEngine;
     type Field = <Self::Engine as XmssHashOps>::Field;
     type PublicKey = XmssPublicKey<Self::Field>;
-    type SecretKey = XmssSecretKey<HEIGHT, Self::Field>;
+    type SecretKey = XmssSecretKey<Self::Field>;
     type Signature = XmssSignature<Self::Field>;
-    const HEIGHT: usize = HEIGHT;
 
-    fn keygen<R: Rng>(rng: &mut R, engine: &Self::Engine) -> (Self::PublicKey, Self::SecretKey) {
-        engine.keygen::<HEIGHT, _>(rng)
+    fn keygen<R: Rng>(
+        rng: &mut R,
+        engine: &Self::Engine,
+        height: usize,
+    ) -> (Self::PublicKey, Self::SecretKey) {
+        engine.keygen(rng, height)
     }
 
     fn sign(
@@ -287,7 +302,7 @@ impl<const HEIGHT: usize> XmssSignatureScheme for SimpleXmssScheme<HEIGHT> {
         leaf_index: usize,
         engine: &Self::Engine,
     ) -> Self::Signature {
-        debug_assert_eq!(secret_key.leaf_count(), 1usize << Self::HEIGHT);
+        debug_assert_eq!(secret_key.leaf_count(), 1usize << secret_key.height());
         XmssSignature::sign(message, secret_key, leaf_index, engine)
     }
 
@@ -303,9 +318,9 @@ impl<const HEIGHT: usize> XmssSignatureScheme for SimpleXmssScheme<HEIGHT> {
 impl<FF: Field + PrimeCharacteristicRing + PrimeField64 + Copy + Eq + Send + Sync>
     XmssSignature<FF>
 {
-    pub fn sign<const HEIGHT: usize>(
+    pub fn sign(
         message: &[u8; MESSAGE_LEN],
-        secret_key_tree: &XmssSecretKey<HEIGHT, FF>,
+        secret_key_tree: &XmssSecretKey<FF>,
         leaf_index: usize,
         engine: &(impl XmssHashOps<Field = FF> + Sync),
     ) -> Self {
@@ -389,13 +404,14 @@ impl<FF: Field + PrimeCharacteristicRing + PrimeField64 + Copy + Eq + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     #[test]
     fn test_signature_verification_works() {
-        type Scheme = SimpleXmssScheme<TREE_HEIGHT>;
+        type Scheme = SimpleXmssScheme;
         let mut rng = rand::rng();
         let engine = PoseidonXmssEngine::default();
-        let (pk, sk) = Scheme::keygen(&mut rng, &engine);
+        let (pk, sk) = Scheme::keygen(&mut rng, &engine, TREE_HEIGHT);
         let message = rng.random();
         let signature = Scheme::sign(&message, &sk, 0, &engine);
         assert!(Scheme::verify(&signature, &pk, &engine));
@@ -403,13 +419,38 @@ mod tests {
 
     #[test]
     fn test_signature_verification_fails() {
-        type Scheme = SimpleXmssScheme<TREE_HEIGHT>;
+        type Scheme = SimpleXmssScheme;
         let mut rng = rand::rng();
         let engine = PoseidonXmssEngine::default();
-        let (pk, sk) = Scheme::keygen(&mut rng, &engine);
+        let (pk, sk) = Scheme::keygen(&mut rng, &engine, TREE_HEIGHT);
         let message = rng.random();
         let mut signature = Scheme::sign(&message, &sk, 0, &engine);
         signature.chunks_wots[0][0] += <PoseidonXmssEngine as XmssHashOps>::Field::ONE; // Corrupt the signature deterministically
         assert!(!Scheme::verify(&signature, &pk, &engine));
+    }
+
+    fn benchmark_params_from_env() -> (usize, usize) {
+        let height = env::var("XMSS_H")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(TREE_HEIGHT);
+        let width = env::var("XMSS_W")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_CHUNK_WIDTH);
+        (height, width)
+    }
+
+    // XMSS_H=12 XMSS_W=2 cargo test --release test_xmss_benchmark_params -- --nocapture
+    #[test]
+    fn test_xmss_benchmark_params() {
+        let (height, width) = benchmark_params_from_env();
+        type Scheme = SimpleXmssScheme;
+        let mut rng = rand::rng();
+        let engine = PoseidonXmssEngine::new(width);
+        let (pk, sk) = Scheme::keygen(&mut rng, &engine, height);
+        let message = rng.random();
+        let signature = Scheme::sign(&message, &sk, 0, &engine);
+        assert!(Scheme::verify(&signature, &pk, &engine));
     }
 }
