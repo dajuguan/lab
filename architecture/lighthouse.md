@@ -618,6 +618,16 @@ TODO
 ### 13.4 演进边界（何时局部改，何时跨层评审）
 TODO
 
+## 14. Lighthouse 子网与接入控制
+
+- 子网流量区分方式：通过 gossipsub topic 名编码子网 ID（如 `beacon_attestation_<id>`、`sync_committee_<id>`、`data_column_sidecar_<id>`），网络层按 topic 订阅/发布，收到消息时也从 topic 反解 subnet id。
+- 子网准入方式：没有“加入某子网的中心化准入鉴权（ACL）”。理论上任何连入 p2p 网络的节点都可订阅/发布对应 topic。
+- 安全与隔离依赖：
+  - 共识校验会校对“消息内容应在的 subnet id”与“topic 携带的 subnet id”是否一致；不一致直接拒绝。
+  - 本地信誉系统会对无效/异常行为降分（Reject/Ignore + `PeerAction`），并据分数触发限流、断开连接、封禁；这是每个节点本地独立执行，不做全网同步。
+- 结论：Lighthouse 的子网模型是“按 topic 分流 + 事后验证 + 本地信誉惩罚”，而不是“子网准入白名单”。
+
+
 ## References
 
 - [Beacon Chain Fork Choice](https://github.com/ethereum/consensus-specs/blob/v0.12.1/specs/phase0/fork-choice.md#handlers)
