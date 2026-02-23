@@ -1,0 +1,12 @@
+[package]
+name = "mycrypto"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "d421e32" }
+p3-baby-bear = { git = "https://github.com/Plonky3/Plonky3.git", rev = "d421e32" }
+p3-koala-bear = { git = "https://github.com/Plonky3/Plonky3.git", rev = "d421e32" }
+p3-symmetric = { git = "https://github.com/Plonky3/Plonky3.git", rev = "d421e32" }
+num-bigint = "0.4.6"
+rand = "0.9"

@@ -4,3 +4,4 @@
 *.json
 *.txt
 kv-db/bench_pebble_*/*
+mycrypto/target/*
