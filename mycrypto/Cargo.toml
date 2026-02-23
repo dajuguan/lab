@@ -10,3 +10,4 @@ p3-koala-bear = { git = "https://github.com/Plonky3/Plonky3.git", rev = "d421e32
 p3-symmetric = { git = "https://github.com/Plonky3/Plonky3.git", rev = "d421e32" }
 num-bigint = "0.4.6"
 rand = "0.9"
+rayon = "1.10"
