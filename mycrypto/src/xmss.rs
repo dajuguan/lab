@@ -1,6 +1,12 @@
 /* eXtended Merkle Signature Scheme (XMSS) implementation in Rust.
 This module provides a basic implementation of the XMSS signature scheme, which is a hash-based signature.
 It's not secure for production use and is intended for educational purposes only.
+The (height, Winternitz w) are important parameters that affect the security and performance of the scheme.
+- The height determines the number of signatures that can be generated (2^height),
+- the Winternitz parameter w determines the WOTS parameters, the larger the w:
+    - the smaller the WOTS signatures
+    - it changes the signing/verification per-chunk chain split (sign uses x, verify uses w - 1 - x), which is balanced by the checksum digits
+    - with checksum digits, total chain budget is parameter-constrained; larger w still usually reduces parallelism because there are fewer independent chunks.
  */
 
 use num_bigint::BigUint;
@@ -17,14 +23,14 @@ use std::time::Instant;
 pub const MESSAGE_LEN: usize = 32; // message length in bytes
 pub const MESSAGE_LEN_FE: usize = 5; // message field elements
 pub const TREE_HEIGHT: usize = 10; // height of the Merkle tree
-pub const DEFAULT_CHUNK_WIDTH: usize = 4; // number of bits per chunk for WOTS signatures
+pub const DEFAULT_WINTERNITZ_W: usize = 4; // Winternitz parameter (base-w) for WOTS
 
 type HashFe<FF> = [FF; MESSAGE_LEN_FE];
 
 pub trait XmssHashOps {
     type Field: Field + PrimeCharacteristicRing + PrimeField64 + Copy + Eq + Send + Sync;
 
-    fn chunk_width(&self) -> usize;
+    fn winternitz_w(&self) -> usize;
     fn hash_one_in_place(&self, input: &mut HashFe<Self::Field>);
     fn hash_pair_in_place(&self, left: &mut HashFe<Self::Field>, right: &HashFe<Self::Field>);
 
@@ -59,13 +65,38 @@ pub trait XmssHashOps {
     }
 
     fn chunk_count(&self) -> usize {
-        (MESSAGE_LEN * 8).div_ceil(self.chunk_width())
+        self.message_digits() + self.checksum_digits()
     }
 
     fn max_chain_steps(&self) -> usize {
-        let width = self.chunk_width();
-        assert!(width > 0 && width < usize::BITS as usize);
-        (1usize << width) - 1
+        let w = self.winternitz_w();
+        assert!(w >= 2, "Winternitz parameter w must be >= 2");
+        w - 1
+    }
+
+    fn log_w(&self) -> usize {
+        let w = self.winternitz_w();
+        assert!(
+            w.is_power_of_two(),
+            "This simplified impl requires Winternitz w to be a power of two"
+        );
+        w.trailing_zeros() as usize
+    }
+
+    fn message_digits(&self) -> usize {
+        let log_w = self.log_w();
+        (MESSAGE_LEN * 8).div_ceil(log_w)
+    }
+
+    fn checksum_digits(&self) -> usize {
+        let w = self.winternitz_w();
+        let mut max_checksum = self.message_digits() * (w - 1);
+        let mut digits = 0;
+        while max_checksum > 0 {
+            digits += 1;
+            max_checksum /= w;
+        }
+        digits.max(1)
     }
 
     fn chain_hash(&self, start: &HashFe<Self::Field>, steps: usize) -> HashFe<Self::Field> {
@@ -76,26 +107,39 @@ pub trait XmssHashOps {
         cur
     }
 
-    fn encode_chunks(&self, message: &[u8; MESSAGE_LEN]) -> Vec<usize> {
-        assert!(
-            self.chunk_width() <= 63,
-            "chunk width too large for u64 conversion"
-        );
-
+    fn encode_chain_lengths(&self, message: &[u8; MESSAGE_LEN]) -> Vec<usize> {
+        let w = self.winternitz_w();
         let mut acc = BigUint::from_bytes_le(message);
-        let base_u64 = 1u64 << self.chunk_width();
+        let base_u64 = w as u64;
         let base = BigUint::from(base_u64);
-        let chunk_count = (MESSAGE_LEN * 8).div_ceil(self.chunk_width());
+        let len1 = self.message_digits();
+        let len2 = self.checksum_digits();
 
-        let mut chunks = Vec::with_capacity(chunk_count);
-        for _ in 0..chunk_count {
+        // 1) Encode the message into base-w digits.
+        // These digits directly determine per-chain signing steps in WOTS.
+        let mut digits = Vec::with_capacity(len1 + len2);
+        for _ in 0..len1 {
             let digit = &acc % &base;
             acc /= &base;
             let d: u64 = digit.try_into().unwrap();
-            chunks.push(d as usize);
+            digits.push(d as usize);
         }
         assert!(acc == BigUint::ZERO, "message was not fully decomposed");
-        chunks
+
+        // 2) Append checksum digits (also in base-w).
+        // The checksum compensates for small message digits, which is the key WOTS idea:
+        // it makes total chain budget constrained by parameters instead of being purely
+        // driven by the message digit sum.
+        let checksum = digits.iter().map(|d| w - 1 - d).sum::<usize>();
+        let mut checksum_acc = BigUint::from(checksum as u64);
+        for _ in 0..len2 {
+            let digit = &checksum_acc % &base;
+            checksum_acc /= &base;
+            let d: u64 = digit.try_into().unwrap();
+            digits.push(d as usize);
+        }
+
+        digits
     }
 
     fn derive_leaf_from_secret(&self, secret: &HashFe<Self::Field>) -> HashFe<Self::Field> {
@@ -207,20 +251,20 @@ impl<FF: Field> XmssSecretKey<FF> {
 #[derive(Clone)]
 pub struct PoseidonXmssEngine {
     poseidon16: Poseidon2KoalaBear<16>,
-    chunk_width: usize,
+    winternitz_w: usize,
 }
 
 impl Default for PoseidonXmssEngine {
     fn default() -> Self {
-        Self::new(DEFAULT_CHUNK_WIDTH)
+        Self::new(DEFAULT_WINTERNITZ_W)
     }
 }
 
 impl PoseidonXmssEngine {
-    pub fn new(chunk_width: usize) -> Self {
+    pub fn new(winternitz_w: usize) -> Self {
         Self {
             poseidon16: default_koalabear_poseidon2_16(),
-            chunk_width,
+            winternitz_w,
         }
     }
 }
@@ -228,8 +272,8 @@ impl PoseidonXmssEngine {
 impl XmssHashOps for PoseidonXmssEngine {
     type Field = KoalaBear;
 
-    fn chunk_width(&self) -> usize {
-        self.chunk_width
+    fn winternitz_w(&self) -> usize {
+        self.winternitz_w
     }
 
     fn hash_one_in_place(&self, input: &mut HashFe<Self::Field>) {
@@ -315,6 +359,14 @@ impl XmssSignatureScheme for SimpleXmssScheme {
     }
 }
 
+pub fn keygen<R: Rng, E: XmssHashOps>(
+    rng: &mut R,
+    engine: &E,
+    height: usize,
+) -> (XmssPublicKey<E::Field>, XmssSecretKey<E::Field>) {
+    engine.keygen(rng, height)
+}
+
 impl<FF: Field + PrimeCharacteristicRing + PrimeField64 + Copy + Eq + Send + Sync>
     XmssSignature<FF>
 {
@@ -335,9 +387,9 @@ impl<FF: Field + PrimeCharacteristicRing + PrimeField64 + Copy + Eq + Send + Syn
             "leaf_index out of range"
         );
         let secret_key = secret_key_tree.signing_key_at(leaf_index);
-        let chunk_values = engine.encode_chunks(message);
+        let chain_lengths = engine.encode_chain_lengths(message);
 
-        let chunks_wots = chunk_values
+        let chunks_wots = chain_lengths
             .par_iter()
             .map(|&x| engine.chain_hash(secret_key, x))
             .collect::<Vec<_>>();
@@ -364,12 +416,12 @@ impl<FF: Field + PrimeCharacteristicRing + PrimeField64 + Copy + Eq + Send + Syn
         // 1. for each chunk, verify the chunks_wots by hashing the secret key for (CHUNK_WIDTH - x) times, where x is the value of the chunk, and compare with the corresponding pubkey in the authentication path
         // 2. Reconstruct the root of the Merkle tree using the authentication path and compare with the public key's root
         let ok = {
-            let chunk_values = engine.encode_chunks(&self.msg);
-            if chunk_values.len() != self.chunks_wots.len() {
+            let chain_lengths = engine.encode_chain_lengths(&self.msg);
+            if chain_lengths.len() != self.chunks_wots.len() {
                 false
             } else {
                 let max_chain = engine.max_chain_steps();
-                let recovered_chunks = chunk_values
+                let recovered_chunks = chain_lengths
                     .par_iter()
                     .zip(self.chunks_wots.par_iter())
                     .map(|(&x, sig_chunk)| engine.chain_hash(sig_chunk, max_chain - x))
@@ -411,7 +463,7 @@ mod tests {
         type Scheme = SimpleXmssScheme;
         let mut rng = rand::rng();
         let engine = PoseidonXmssEngine::default();
-        let (pk, sk) = Scheme::keygen(&mut rng, &engine, TREE_HEIGHT);
+        let (pk, sk) = keygen(&mut rng, &engine, TREE_HEIGHT);
         let message = rng.random();
         let signature = Scheme::sign(&message, &sk, 0, &engine);
         assert!(Scheme::verify(&signature, &pk, &engine));
@@ -437,7 +489,7 @@ mod tests {
         let width = env::var("XMSS_W")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_CHUNK_WIDTH);
+            .unwrap_or(DEFAULT_WINTERNITZ_W);
         (height, width)
     }
 
@@ -452,5 +504,33 @@ mod tests {
         let message = rng.random();
         let signature = Scheme::sign(&message, &sk, 0, &engine);
         assert!(Scheme::verify(&signature, &pk, &engine));
+    }
+
+    // cargo test test_wots_chain_length_breakdown -- --nocapture
+    #[test]
+    fn test_wots_chain_length_breakdown() {
+        fn analyze(engine: &PoseidonXmssEngine, label: &str, msg: [u8; MESSAGE_LEN]) {
+            let len1 = engine.message_digits();
+            let chains = engine.encode_chain_lengths(&msg);
+            let msg_sum: usize = chains[..len1].iter().copied().sum();
+            let cks_sum: usize = chains[len1..].iter().copied().sum();
+            let sign_total = msg_sum + cks_sum;
+            let max_chain = engine.max_chain_steps();
+            let chunk_count = chains.len();
+            let verify_total = max_chain * chunk_count - sign_total;
+            let budget = max_chain * chunk_count;
+            println!(
+                "{label}: msg_sum={msg_sum}, cks_sum={cks_sum}, sign_total={sign_total}, verify_total={verify_total}, max_chain_steps*chunk_count={budget}"
+            );
+        }
+
+        let engine = PoseidonXmssEngine::default();
+        analyze(&engine, "all-zero", [0u8; MESSAGE_LEN]);
+        analyze(&engine, "all-ff", [0xffu8; MESSAGE_LEN]);
+        analyze(
+            &engine,
+            "pattern",
+            std::array::from_fn(|i| (i as u8).wrapping_mul(17)),
+        );
     }
 }
