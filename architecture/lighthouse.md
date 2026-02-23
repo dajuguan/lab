@@ -627,6 +627,52 @@ TODO
   - 本地信誉系统会对无效/异常行为降分（Reject/Ignore + `PeerAction`），并据分数触发限流、断开连接、封禁；这是每个节点本地独立执行，不做全网同步。
 - 结论：Lighthouse 的子网模型是“按 topic 分流 + 事后验证 + 本地信誉惩罚”，而不是“子网准入白名单”。
 
+## 15. Sync Commitee两层签名聚合
+
+### 15.1 为什么需要 Sync Committee
+
+- 目标：为 light client 提供低状态、低带宽的头部跟踪与更新验证路径。
+- 如果只依赖普通 attestation，轻客户端需要频繁重建/验证动态 committee 分配，验证成本高。
+- Sync Committee 通过“周期内固定小组持续签名”降低了 light client 的验证复杂度。
+
+### 15.2 与普通每 slot attestor 的区别
+
+- 普通 attestation：服务于全节点 fork choice / finality 主路径。
+- Sync Committee：服务于轻客户端同步与更新验证（optimistic/finality update 相关）。
+- Sync Committee 不替代 attestation，而是并行的补充信号层。
+
+### 15.3 不是每个 checkpoint 重选
+
+- 重选粒度是 sync committee period，不是每个 checkpoint。
+- 主网参数下一个 period 为 256 个 epoch。
+
+### 15.4 两层签名聚合（Lighthouse 实现）
+
+1. 第一层：子网内聚合
+- `SyncCommitteeMessage` 在 `sync_committee_<subnet_id>` topic 传播。
+- 先校验消息是否在正确子网；错误子网直接拒绝。
+- 通过后进入 `naive_sync_aggregation_pool`，形成同一 `subcommittee_index` 的 `SyncCommitteeContribution`。
+
+2. 第二层：跨子网合并
+- 出块阶段将多个子网的 `SyncCommitteeContribution` 合并为一个 `SyncAggregate`（区块字段）。
+- 子网内早期聚合：由被选中的 sync aggregator（委员会成员里被选中者）做，产出 SignedContributionAndProof；
+- 该最终聚合由每个 slot 的 proposer 执行；proposer 负责收集各子网 contribution 并写入区块。
+- 因此“跨子网聚合”发生在区块构建/状态处理层，不是 gossip 单 topic 内直接混聚。
+
+### 15.5 共识与惩罚语义
+
+- `SyncAggregate` 是共识处理路径的一部分，校验失败会导致区块无效。
+- 对单条 gossip sync 消息，作恶/无效会触发本地 `Reject/Ignore` 与 peer 信誉惩罚（本地执行，不全网同步）。
+- 经济层面上有参与激励与缺席后果，但不存在与 proposer/attester 同型的独立 sync-committee slashing 类型。
+
+### 15.6 参考规范
+
+- Altair Validator (Sync Committee Duties): https://ethereum.github.io/consensus-specs/specs/altair/validator/
+- Altair Light Client Sync Protocol: https://ethereum.github.io/consensus-specs/specs/altair/light-client/sync-protocol/
+- Altair Light Client: https://ethereum.github.io/consensus-specs/specs/altair/light-client/light-client/
+- Altair Light Client P2P Interface: https://ethereum.github.io/consensus-specs/specs/altair/light-client/p2p-interface/
+- Consensus Specs 总入口: https://ethereum.github.io/consensus-specs/
+- EIP-2982 (Beacon Chain Phase 0): https://eips.ethereum.org/EIPS/eip-2982
 
 ## References
 
