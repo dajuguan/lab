@@ -5,3 +5,5 @@
 *.txt
 kv-db/bench_pebble_*/*
 mycrypto/target/*
+perf/target/*
+perf/out/*
