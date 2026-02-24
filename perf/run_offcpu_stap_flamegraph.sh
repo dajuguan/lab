@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo 1 | sudo tee /proc/sys/kernel/sched_schedstats
+echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_DIR="${ROOT_DIR}/out"
 SECONDS_TO_RECORD="${1:-10}"
@@ -9,6 +13,8 @@ DEMO_BIN_NAME="${DEMO_BIN_NAME:-offcpu-demo}"
 SAMPLE_BT_OFFCPU="${SAMPLE_BT_OFFCPU:-$(command -v sample-bt-off-cpu || true)}"
 STACKCOLLAPSE_STAP_PL="${STACKCOLLAPSE_STAP_PL:-/opt/FlameGraph/stackcollapse-stap.pl}"
 FLAMEGRAPH_PL="${FLAMEGRAPH_PL:-/opt/FlameGraph/flamegraph.pl}"
+# Include kernel stack by default so syscall names (e.g. __x64_sys_futex) appear in the flamegraph.
+OFFCPU_INCLUDE_KERNEL="${OFFCPU_INCLUDE_KERNEL:-1}"
 
 OUT_STAP="${OUT_DIR}/out.stap"
 OUT_FOLDED="${OUT_DIR}/out.folded"
@@ -54,7 +60,11 @@ if ! kill -0 "${DEMO_PID}" >/dev/null 2>&1; then
 fi
 
 echo "[3/4] recording off-cpu with sample-bt-off-cpu for ${SECONDS_TO_RECORD}s (pid=${DEMO_PID}) ..."
-"${SAMPLE_BT_OFFCPU}" -t "${SECONDS_TO_RECORD}" -p "${DEMO_PID}" -u > "${OUT_STAP}"
+STAP_ARGS=(-t "${SECONDS_TO_RECORD}" -p "${DEMO_PID}" -u)
+if [[ "${OFFCPU_INCLUDE_KERNEL}" == "1" ]]; then
+  STAP_ARGS+=(-k)
+fi
+"${SAMPLE_BT_OFFCPU}" "${STAP_ARGS[@]}" > "${OUT_STAP}"
 if [[ ! -s "${OUT_STAP}" ]]; then
   echo "sample-bt-off-cpu produced no output."
   echo "Run with sudo, or configure stap permissions (stapusr/stapsys/stapdev)."

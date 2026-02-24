@@ -9,6 +9,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_DIR="${ROOT_DIR}/out"
 SECONDS_TO_RECORD="${1:-20}"
 PERF_BIN="${PERF_BIN:-$(command -v perf || true)}"
+PERF_WRAPPER=()
 # Blog-compatible perf script fields for off-cpu synthesis.
 PERF_SCRIPT_FIELDS="${PERF_SCRIPT_FIELDS:-comm,pid,tid,cpu,time,period,event,ip,sym,dso,trace}"
 DEMO_BIN_NAME="${DEMO_BIN_NAME:-offcpu-demo}"
@@ -32,6 +33,20 @@ if [[ -z "${PERF_BIN}" || ! -x "${PERF_BIN}" ]]; then
 fi
 echo "using perf: ${PERF_BIN}"
 "${PERF_BIN}" --version || true
+
+TRACE_EVENT_ID="/sys/kernel/tracing/events/sched/sched_stat_sleep/id"
+if [[ ! -r "${TRACE_EVENT_ID}" ]]; then
+  if command -v sudo >/dev/null 2>&1; then
+    echo "tracepoint metadata is not readable as current user; switching to sudo perf ..."
+    PERF_WRAPPER=(sudo)
+  else
+    cat <<EOF
+No permission to read ${TRACE_EVENT_ID}, and sudo is unavailable.
+Run this script as root, or grant access to tracefs event files.
+EOF
+    exit 1
+  fi
+fi
 
 if [[ ! -r /proc/sys/kernel/perf_event_paranoid ]]; then
   echo "Cannot read /proc/sys/kernel/perf_event_paranoid."
@@ -107,7 +122,7 @@ if ! kill -0 "${DEMO_PID}" >/dev/null 2>&1; then
 fi
 
 echo "[3/5] recording off-cpu events for ${SECONDS_TO_RECORD}s (pid=${DEMO_PID}) ..."
-"${PERF_BIN}" record \
+"${PERF_WRAPPER[@]}" "${PERF_BIN}" record \
   -e sched:sched_stat_sleep \
   -e sched:sched_switch \
   -e sched:sched_process_exit \
@@ -117,10 +132,10 @@ echo "[3/5] recording off-cpu events for ${SECONDS_TO_RECORD}s (pid=${DEMO_PID})
   -- sleep "${SECONDS_TO_RECORD}"
 
 echo "[4/5] injecting sched-stat and folding stacks ..."
-"${PERF_BIN}" inject -v -s -i "${RAW_DATA}" -o "${DATA}"
+"${PERF_WRAPPER[@]}" "${PERF_BIN}" inject -v -s -i "${RAW_DATA}" -o "${DATA}"
 SCRIPT_MODE="offcpu-injected"
 set +e
-"${PERF_BIN}" script -F "${PERF_SCRIPT_FIELDS}" -i "${DATA}" > "${SCRIPT_TXT}"
+"${PERF_WRAPPER[@]}" "${PERF_BIN}" script -F "${PERF_SCRIPT_FIELDS}" -i "${DATA}" > "${SCRIPT_TXT}"
 SCRIPT_RC=$?
 set -e
 if [[ "${SCRIPT_RC}" -ne 0 || ! -s "${SCRIPT_TXT}" ]]; then
@@ -131,7 +146,7 @@ if [[ "${SCRIPT_RC}" -ne 0 || ! -s "${SCRIPT_TXT}" ]]; then
   fi
   echo "warn: this fallback can still produce a flamegraph, but off-cpu synthesis may be incomplete."
   SCRIPT_MODE="raw-fallback"
-  "${PERF_BIN}" script -F "${PERF_SCRIPT_FIELDS}" -i "${RAW_DATA}" > "${SCRIPT_TXT}"
+  "${PERF_WRAPPER[@]}" "${PERF_BIN}" script -F "${PERF_SCRIPT_FIELDS}" -i "${RAW_DATA}" > "${SCRIPT_TXT}"
 fi
 if [[ ! -s "${SCRIPT_TXT}" ]]; then
   echo "perf script produced no events after --sched-stat inject."
