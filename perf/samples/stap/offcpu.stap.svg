@@ -1,0 +1,1366 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="438" onload="init(evt)" viewBox="0 0 1200 438" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#e0e0ff" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="438.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="421" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="421" > </text>
+<g id="frames">
+<g >
+<title>schedule (17,844,008 samples, 9.82%)</title><rect x="443.5" y="133" width="115.9" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="446.52" y="143.5" >schedule</text>
+</g>
+<g >
+<title>x64_sys_call (19,938,426 samples, 10.97%)</title><rect x="702.3" y="213" width="129.4" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="705.27" y="223.5" >x64_sys_call</text>
+</g>
+<g >
+<title>asm_exc_page_fault (16,069,098 samples, 8.84%)</title><rect x="831.8" y="277" width="104.3" height="15.0" fill="rgb(104,104,212)" rx="2" ry="2" />
+<text  x="834.76" y="287.5" >asm_exc_page..</text>
+</g>
+<g >
+<title>_ZN11offcpu_demo12sleep_worker17hdbad35849c3085f5E (19,927,942 samples, 10.97%)</title><rect x="314.1" y="293" width="129.4" height="15.0" fill="rgb(82,82,192)" rx="2" ry="2" />
+<text  x="317.11" y="303.5" >_ZN11offcpu_demo..</text>
+</g>
+<g >
+<title>_ZN11offcpu_demo15block_io_worker17hd192be892aca214fE (14,810,252 samples, 8.15%)</title><rect x="217.9" y="293" width="96.2" height="15.0" fill="rgb(102,102,210)" rx="2" ry="2" />
+<text  x="220.94" y="303.5" >_ZN11offcpu..</text>
+</g>
+<g >
+<title>jbd2_log_wait_commit (5,421,906 samples, 2.98%)</title><rect x="157.6" y="133" width="35.2" height="15.0" fill="rgb(122,122,228)" rx="2" ry="2" />
+<text  x="160.63" y="143.5" >jb..</text>
+</g>
+<g >
+<title>__ia32_sys_restart_syscall (640,098 samples, 0.35%)</title><rect x="1068.6" y="149" width="4.1" height="15.0" fill="rgb(131,131,237)" rx="2" ry="2" />
+<text  x="1071.56" y="159.5" ></text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (18,060,576 samples, 9.94%)</title><rect x="1072.7" y="53" width="117.3" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="1075.72" y="63.5" >finish_task_sw..</text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17h86c40bd48354e831E (14,810,252 samples, 8.15%)</title><rect x="217.9" y="309" width="96.2" height="15.0" fill="rgb(94,94,203)" rx="2" ry="2" />
+<text  x="220.94" y="319.5" >_ZN3std3sys..</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (506,794 samples, 0.28%)</title><rect x="936.1" y="245" width="3.3" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="939.11" y="255.5" ></text>
+</g>
+<g >
+<title>__schedule (19,927,942 samples, 10.97%)</title><rect x="314.1" y="117" width="129.4" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="317.11" y="127.5" >__schedule</text>
+</g>
+<g >
+<title>ext4_fc_commit (5,421,906 samples, 2.98%)</title><rect x="157.6" y="165" width="35.2" height="15.0" fill="rgb(112,112,220)" rx="2" ry="2" />
+<text  x="160.63" y="175.5" >ex..</text>
+</g>
+<g >
+<title>__schedule (3,865,406 samples, 2.13%)</title><rect x="192.8" y="53" width="25.1" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="195.84" y="63.5" >_..</text>
+</g>
+<g >
+<title>do_nanosleep (640,098 samples, 0.35%)</title><rect x="1068.6" y="117" width="4.1" height="15.0" fill="rgb(137,137,242)" rx="2" ry="2" />
+<text  x="1071.56" y="127.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (19,927,942 samples, 10.97%)</title><rect x="314.1" y="213" width="129.4" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="317.11" y="223.5" >x64_sys_call</text>
+</g>
+<g >
+<title>x64_sys_call (17,844,008 samples, 9.82%)</title><rect x="443.5" y="213" width="115.9" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="446.52" y="223.5" >x64_sys_call</text>
+</g>
+<g >
+<title>__libc_start_main (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="357" width="121.4" height="15.0" fill="rgb(117,117,224)" rx="2" ry="2" />
+<text  x="1071.56" y="367.5" >__libc_start_main</text>
+</g>
+<g >
+<title>fdatasync (14,808,218 samples, 8.15%)</title><rect x="218.0" y="277" width="96.1" height="15.0" fill="rgb(111,111,219)" rx="2" ry="2" />
+<text  x="220.95" y="287.5" >fdatasync</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (2,048,484 samples, 1.13%)</title><rect x="939.5" y="245" width="13.3" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="942.46" y="255.5" ></text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (2,046,324 samples, 1.13%)</title><rect x="559.4" y="101" width="13.3" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="562.40" y="111.5" ></text>
+</g>
+<g >
+<title>io_schedule_timeout (7,236,982 samples, 3.98%)</title><rect x="110.6" y="101" width="47.0" height="15.0" fill="rgb(104,104,212)" rx="2" ry="2" />
+<text  x="113.63" y="111.5" >io_s..</text>
+</g>
+<g >
+<title>x64_sys_call (15,496,748 samples, 8.53%)</title><rect x="10.0" y="213" width="100.6" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="13.00" y="223.5" >x64_sys_call</text>
+</g>
+<g >
+<title>schedule (2,048,484 samples, 1.13%)</title><rect x="939.5" y="133" width="13.3" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="942.46" y="143.5" ></text>
+</g>
+<g >
+<title>_ZN11offcpu_demo16condvar_signaler17h26826d54083ce634E (19,938,426 samples, 10.97%)</title><rect x="702.3" y="293" width="129.4" height="15.0" fill="rgb(122,122,228)" rx="2" ry="2" />
+<text  x="705.27" y="303.5" >_ZN11offcpu_demo..</text>
+</g>
+<g >
+<title>io_schedule (7,794,748 samples, 4.29%)</title><rect x="263.5" y="101" width="50.6" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="266.49" y="111.5" >io_sc..</text>
+</g>
+<g >
+<title>io_schedule (16,069,098 samples, 8.84%)</title><rect x="831.8" y="133" width="104.3" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="834.76" y="143.5" >io_schedule</text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17hf990832c4147adbbE (19,880,928 samples, 10.94%)</title><rect x="939.5" y="309" width="129.1" height="15.0" fill="rgb(93,93,202)" rx="2" ry="2" />
+<text  x="942.46" y="319.5" >_ZN3std3sys9back..</text>
+</g>
+<g >
+<title>file_write_and_wait_range (3,865,406 samples, 2.13%)</title><rect x="192.8" y="165" width="25.1" height="15.0" fill="rgb(120,120,227)" rx="2" ry="2" />
+<text  x="195.84" y="175.5" >f..</text>
+</g>
+<g >
+<title>do_syscall_64 (16,524,294 samples, 9.09%)</title><rect x="110.6" y="245" width="107.3" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="113.63" y="255.5" >do_syscall_64</text>
+</g>
+<g >
+<title>__schedule (17,844,008 samples, 9.82%)</title><rect x="443.5" y="117" width="115.9" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="446.52" y="127.5" >__schedule</text>
+</g>
+<g >
+<title>syscall (2,048,484 samples, 1.13%)</title><rect x="939.5" y="261" width="13.3" height="15.0" fill="rgb(115,115,222)" rx="2" ry="2" />
+<text  x="942.46" y="271.5" ></text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (19,927,942 samples, 10.97%)</title><rect x="314.1" y="101" width="129.4" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="317.11" y="111.5" >finish_task_swit..</text>
+</g>
+<g >
+<title>__schedule (15,496,748 samples, 8.53%)</title><rect x="10.0" y="117" width="100.6" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="13.00" y="127.5" >__schedule</text>
+</g>
+<g >
+<title>common_nsleep (18,060,576 samples, 9.94%)</title><rect x="1072.7" y="133" width="117.3" height="15.0" fill="rgb(107,107,215)" rx="2" ry="2" />
+<text  x="1075.72" y="143.5" >common_nsleep</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (7,236,982 samples, 3.98%)</title><rect x="110.6" y="37" width="47.0" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="113.63" y="47.5" >fini..</text>
+</g>
+<g >
+<title>__schedule (7,236,982 samples, 3.98%)</title><rect x="110.6" y="53" width="47.0" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="113.63" y="63.5" >__sc..</text>
+</g>
+<g >
+<title>x64_sys_call (2,046,324 samples, 1.13%)</title><rect x="559.4" y="213" width="13.3" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="562.40" y="223.5" ></text>
+</g>
+<g >
+<title>_ZN3std3sys4sync5mutex5futex5Mutex14lock_contended17h4c31cf024f7e2908E (2,048,484 samples, 1.13%)</title><rect x="939.5" y="277" width="13.3" height="15.0" fill="rgb(86,86,195)" rx="2" ry="2" />
+<text  x="942.46" y="287.5" ></text>
+</g>
+<g >
+<title>do_nanosleep (19,938,426 samples, 10.97%)</title><rect x="702.3" y="149" width="129.4" height="15.0" fill="rgb(137,137,242)" rx="2" ry="2" />
+<text  x="705.27" y="159.5" >do_nanosleep</text>
+</g>
+<g >
+<title>__schedule (17,832,424 samples, 9.81%)</title><rect x="952.8" y="117" width="115.8" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="955.76" y="127.5" >__schedule</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (17,832,424 samples, 9.81%)</title><rect x="952.8" y="101" width="115.8" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="955.76" y="111.5" >finish_task_sw..</text>
+</g>
+<g >
+<title>syscall (19,954,738 samples, 10.98%)</title><rect x="572.7" y="277" width="129.6" height="15.0" fill="rgb(115,115,222)" rx="2" ry="2" />
+<text  x="575.68" y="287.5" >syscall</text>
+</g>
+<g >
+<title>_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17h37239e8458b1518dE (19,890,396 samples, 10.95%)</title><rect x="443.5" y="325" width="129.2" height="15.0" fill="rgb(109,109,216)" rx="2" ry="2" />
+<text  x="446.52" y="335.5" >_ZN4core3ops8fun..</text>
+</g>
+<g >
+<title>main (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="325" width="121.4" height="15.0" fill="rgb(126,126,232)" rx="2" ry="2" />
+<text  x="1071.56" y="335.5" >main</text>
+</g>
+<g >
+<title>nanosleep (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="229" width="121.4" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="1071.56" y="239.5" >nanosleep</text>
+</g>
+<g >
+<title>_ZN11offcpu_demo4main17hf4c77047710b06abE (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="261" width="121.4" height="15.0" fill="rgb(97,97,206)" rx="2" ry="2" />
+<text  x="1071.56" y="271.5" >_ZN11offcpu_dem..</text>
+</g>
+<g >
+<title>clock_nanosleep (506,794 samples, 0.28%)</title><rect x="936.1" y="261" width="3.3" height="15.0" fill="rgb(111,111,218)" rx="2" ry="2" />
+<text  x="939.11" y="271.5" ></text>
+</g>
+<g >
+<title>schedule (7,236,982 samples, 3.98%)</title><rect x="110.6" y="69" width="47.0" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="113.63" y="79.5" >sche..</text>
+</g>
+<g >
+<title>do_syscall_64 (17,844,008 samples, 9.82%)</title><rect x="443.5" y="229" width="115.9" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="446.52" y="239.5" >do_syscall_64</text>
+</g>
+<g >
+<title>__schedule (18,060,576 samples, 9.94%)</title><rect x="1072.7" y="69" width="117.3" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="1075.72" y="79.5" >__schedule</text>
+</g>
+<g >
+<title>x64_sys_call (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="165" width="121.4" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="1071.56" y="175.5" >x64_sys_call</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (7,013,470 samples, 3.86%)</title><rect x="218.0" y="53" width="45.5" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="220.95" y="63.5" >fini..</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (506,794 samples, 0.28%)</title><rect x="936.1" y="101" width="3.3" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="939.11" y="111.5" ></text>
+</g>
+<g >
+<title>filemap_fault (16,069,098 samples, 8.84%)</title><rect x="831.8" y="165" width="104.3" height="15.0" fill="rgb(97,97,206)" rx="2" ry="2" />
+<text  x="834.76" y="175.5" >filemap_fault</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (15,496,748 samples, 8.53%)</title><rect x="10.0" y="101" width="100.6" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="13.00" y="111.5" >finish_task_..</text>
+</g>
+<g >
+<title>clock_nanosleep (19,927,942 samples, 10.97%)</title><rect x="314.1" y="261" width="129.4" height="15.0" fill="rgb(111,111,218)" rx="2" ry="2" />
+<text  x="317.11" y="271.5" >clock_nanosleep</text>
+</g>
+<g >
+<title>schedule (19,954,738 samples, 10.98%)</title><rect x="572.7" y="149" width="129.6" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="575.68" y="159.5" >schedule</text>
+</g>
+<g >
+<title>__x64_sys_fsync (16,524,294 samples, 9.09%)</title><rect x="110.6" y="213" width="107.3" height="15.0" fill="rgb(131,131,237)" rx="2" ry="2" />
+<text  x="113.63" y="223.5" >__x64_sys_fsync</text>
+</g>
+<g >
+<title>schedule (5,421,906 samples, 2.98%)</title><rect x="157.6" y="117" width="35.2" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="160.63" y="127.5" >sc..</text>
+</g>
+<g >
+<title>ext4_sync_file (14,808,218 samples, 8.15%)</title><rect x="218.0" y="197" width="96.1" height="15.0" fill="rgb(87,87,196)" rx="2" ry="2" />
+<text  x="220.95" y="207.5" >ext4_sync_f..</text>
+</g>
+<g >
+<title>_start (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="373" width="121.4" height="15.0" fill="rgb(128,128,234)" rx="2" ry="2" />
+<text  x="1071.56" y="383.5" >_start</text>
+</g>
+<g >
+<title>schedule (3,865,406 samples, 2.13%)</title><rect x="192.8" y="69" width="25.1" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="195.84" y="79.5" >s..</text>
+</g>
+<g >
+<title>__filemap_fdatawait_range (3,865,406 samples, 2.13%)</title><rect x="192.8" y="149" width="25.1" height="15.0" fill="rgb(128,128,234)" rx="2" ry="2" />
+<text  x="195.84" y="159.5" >_..</text>
+</g>
+<g >
+<title>_ZN3std3sys3pal4unix6thread6Thread3new12thread_start17hb6e99e73da4d28f8E (163,011,696 samples, 89.71%)</title><rect x="10.0" y="341" width="1058.6" height="15.0" fill="rgb(136,136,241)" rx="2" ry="2" />
+<text  x="13.00" y="351.5" >_ZN3std3sys3pal4unix6thread6Thread3new12thread_start17hb6e99e73da4d28f8E</text>
+</g>
+<g >
+<title>nanosleep (19,927,942 samples, 10.97%)</title><rect x="314.1" y="277" width="129.4" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="317.11" y="287.5" >nanosleep</text>
+</g>
+<g >
+<title>schedule (19,927,942 samples, 10.97%)</title><rect x="314.1" y="133" width="129.4" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="317.11" y="143.5" >schedule</text>
+</g>
+<g >
+<title>_ZN3std6thread5sleep17h319c3255c44969c9E (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="245" width="121.4" height="15.0" fill="rgb(97,97,205)" rx="2" ry="2" />
+<text  x="1071.56" y="255.5" >_ZN3std6thread5..</text>
+</g>
+<g >
+<title>common_nsleep (19,938,426 samples, 10.97%)</title><rect x="702.3" y="181" width="129.4" height="15.0" fill="rgb(107,107,215)" rx="2" ry="2" />
+<text  x="705.27" y="191.5" >common_nsleep</text>
+</g>
+<g >
+<title>do_syscall_64 (506,794 samples, 0.28%)</title><rect x="936.1" y="229" width="3.3" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="939.11" y="239.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (2,046,324 samples, 1.13%)</title><rect x="559.4" y="229" width="13.3" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="562.40" y="239.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (506,794 samples, 0.28%)</title><rect x="936.1" y="213" width="3.3" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="939.11" y="223.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (15,496,748 samples, 8.53%)</title><rect x="10.0" y="245" width="100.6" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="13.00" y="255.5" >entry_SYSCAL..</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (640,098 samples, 0.35%)</title><rect x="1068.6" y="69" width="4.1" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="1071.56" y="79.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (16,524,294 samples, 9.09%)</title><rect x="110.6" y="229" width="107.3" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="113.63" y="239.5" >x64_sys_call</text>
+</g>
+<g >
+<title>do_futex (17,844,008 samples, 9.82%)</title><rect x="443.5" y="181" width="115.9" height="15.0" fill="rgb(128,128,234)" rx="2" ry="2" />
+<text  x="446.52" y="191.5" >do_futex</text>
+</g>
+<g >
+<title>vfs_fsync_range (16,524,294 samples, 9.09%)</title><rect x="110.6" y="197" width="107.3" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="113.63" y="207.5" >vfs_fsync_range</text>
+</g>
+<g >
+<title>hrtimer_nanosleep (19,938,426 samples, 10.97%)</title><rect x="702.3" y="165" width="129.4" height="15.0" fill="rgb(118,118,225)" rx="2" ry="2" />
+<text  x="705.27" y="175.5" >hrtimer_nanosleep</text>
+</g>
+<g >
+<title>__x64_sys_clock_nanosleep (18,060,576 samples, 9.94%)</title><rect x="1072.7" y="149" width="117.3" height="15.0" fill="rgb(132,132,238)" rx="2" ry="2" />
+<text  x="1075.72" y="159.5" >__x64_sys_cloc..</text>
+</g>
+<g >
+<title>do_syscall_64 (19,954,738 samples, 10.98%)</title><rect x="572.7" y="245" width="129.6" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="575.68" y="255.5" >do_syscall_64</text>
+</g>
+<g >
+<title>_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17hd5c946d7bec610adE (16,585,522 samples, 9.13%)</title><rect x="831.8" y="325" width="107.7" height="15.0" fill="rgb(133,133,239)" rx="2" ry="2" />
+<text  x="834.76" y="335.5" >_ZN4core3ops8..</text>
+</g>
+<g >
+<title>_ZN3std2rt10lang_start28_$u7b$$u7b$closure$u7d$$u7d$17h5b2a0810014f3fbdE.llvm.13570243542251128759 (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="293" width="121.4" height="15.0" fill="rgb(121,121,228)" rx="2" ry="2" />
+<text  x="1071.56" y="303.5" >_ZN3std2rt10lan..</text>
+</g>
+<g >
+<title>_ZN11offcpu_demo11lock_worker17h82c9fc13dcc22e40E (19,880,928 samples, 10.94%)</title><rect x="939.5" y="293" width="129.1" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="942.46" y="303.5" >_ZN11offcpu_demo..</text>
+</g>
+<g >
+<title>hrtimer_nanosleep (18,060,576 samples, 9.94%)</title><rect x="1072.7" y="117" width="117.3" height="15.0" fill="rgb(118,118,225)" rx="2" ry="2" />
+<text  x="1075.72" y="127.5" >hrtimer_nanosl..</text>
+</g>
+<g >
+<title>_ZN3std3sys4sync5mutex5futex5Mutex14lock_contended17h4c31cf024f7e2908E (17,844,008 samples, 9.82%)</title><rect x="443.5" y="277" width="115.9" height="15.0" fill="rgb(86,86,195)" rx="2" ry="2" />
+<text  x="446.52" y="287.5" >_ZN3std3sys4sy..</text>
+</g>
+<g >
+<title>blkdev_issue_flush (7,013,470 samples, 3.86%)</title><rect x="218.0" y="181" width="45.5" height="15.0" fill="rgb(138,138,244)" rx="2" ry="2" />
+<text  x="220.95" y="191.5" >blkd..</text>
+</g>
+<g >
+<title>__x64_sys_fdatasync (14,808,218 samples, 8.15%)</title><rect x="218.0" y="213" width="96.1" height="15.0" fill="rgb(133,133,238)" rx="2" ry="2" />
+<text  x="220.95" y="223.5" >__x64_sys_f..</text>
+</g>
+<g >
+<title>_ZN11offcpu_demo17page_fault_worker17h5bf0966d09cb392bE (16,585,522 samples, 9.13%)</title><rect x="831.8" y="293" width="107.7" height="15.0" fill="rgb(117,117,224)" rx="2" ry="2" />
+<text  x="834.76" y="303.5" >_ZN11offcpu_d..</text>
+</g>
+<g >
+<title>schedule (2,046,324 samples, 1.13%)</title><rect x="559.4" y="133" width="13.3" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="562.40" y="143.5" ></text>
+</g>
+<g >
+<title>__schedule (2,046,324 samples, 1.13%)</title><rect x="559.4" y="117" width="13.3" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="562.40" y="127.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (17,844,008 samples, 9.82%)</title><rect x="443.5" y="245" width="115.9" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="446.52" y="255.5" >entry_SYSCALL_..</text>
+</g>
+<g >
+<title>nanosleep (2,046,324 samples, 1.13%)</title><rect x="559.4" y="277" width="13.3" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="562.40" y="287.5" ></text>
+</g>
+<g >
+<title>hrtimer_nanosleep (15,496,748 samples, 8.53%)</title><rect x="10.0" y="165" width="100.6" height="15.0" fill="rgb(118,118,225)" rx="2" ry="2" />
+<text  x="13.00" y="175.5" >hrtimer_nano..</text>
+</g>
+<g >
+<title>do_nanosleep (18,060,576 samples, 9.94%)</title><rect x="1072.7" y="101" width="117.3" height="15.0" fill="rgb(137,137,242)" rx="2" ry="2" />
+<text  x="1075.72" y="111.5" >do_nanosleep</text>
+</g>
+<g >
+<title>__x64_sys_futex (17,844,008 samples, 9.82%)</title><rect x="443.5" y="197" width="115.9" height="15.0" fill="rgb(121,121,228)" rx="2" ry="2" />
+<text  x="446.52" y="207.5" >__x64_sys_futex</text>
+</g>
+<g >
+<title>__x64_sys_clock_nanosleep (17,832,424 samples, 9.81%)</title><rect x="952.8" y="197" width="115.8" height="15.0" fill="rgb(132,132,238)" rx="2" ry="2" />
+<text  x="955.76" y="207.5" >__x64_sys_cloc..</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (3,865,406 samples, 2.13%)</title><rect x="192.8" y="37" width="25.1" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="195.84" y="47.5" >f..</text>
+</g>
+<g >
+<title>do_futex (2,048,484 samples, 1.13%)</title><rect x="939.5" y="181" width="13.3" height="15.0" fill="rgb(128,128,234)" rx="2" ry="2" />
+<text  x="942.46" y="191.5" ></text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (16,069,098 samples, 8.84%)</title><rect x="831.8" y="85" width="104.3" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="834.76" y="95.5" >finish_task_..</text>
+</g>
+<g >
+<title>futex_wait_queue (17,844,008 samples, 9.82%)</title><rect x="443.5" y="149" width="115.9" height="15.0" fill="rgb(104,104,212)" rx="2" ry="2" />
+<text  x="446.52" y="159.5" >futex_wait_queue</text>
+</g>
+<g >
+<title>do_syscall_64 (19,927,942 samples, 10.97%)</title><rect x="314.1" y="229" width="129.4" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="317.11" y="239.5" >do_syscall_64</text>
+</g>
+<g >
+<title>futex_wait_queue (2,048,484 samples, 1.13%)</title><rect x="939.5" y="149" width="13.3" height="15.0" fill="rgb(104,104,212)" rx="2" ry="2" />
+<text  x="942.46" y="159.5" ></text>
+</g>
+<g >
+<title>submit_bio_wait (7,236,982 samples, 3.98%)</title><rect x="110.6" y="149" width="47.0" height="15.0" fill="rgb(99,99,207)" rx="2" ry="2" />
+<text  x="113.63" y="159.5" >subm..</text>
+</g>
+<g >
+<title>hrtimer_nanosleep (17,832,424 samples, 9.81%)</title><rect x="952.8" y="165" width="115.8" height="15.0" fill="rgb(118,118,225)" rx="2" ry="2" />
+<text  x="955.76" y="175.5" >hrtimer_nanosl..</text>
+</g>
+<g >
+<title>__schedule (19,938,426 samples, 10.97%)</title><rect x="702.3" y="117" width="129.4" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="705.27" y="127.5" >__schedule</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (2,046,324 samples, 1.13%)</title><rect x="559.4" y="245" width="13.3" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="562.40" y="255.5" ></text>
+</g>
+<g >
+<title>futex_wait (17,844,008 samples, 9.82%)</title><rect x="443.5" y="165" width="115.9" height="15.0" fill="rgb(116,116,223)" rx="2" ry="2" />
+<text  x="446.52" y="175.5" >futex_wait</text>
+</g>
+<g >
+<title>__schedule (506,794 samples, 0.28%)</title><rect x="936.1" y="117" width="3.3" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="939.11" y="127.5" ></text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (17,844,008 samples, 9.82%)</title><rect x="443.5" y="101" width="115.9" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="446.52" y="111.5" >finish_task_sw..</text>
+</g>
+<g >
+<title>schedule_timeout (7,236,982 samples, 3.98%)</title><rect x="110.6" y="85" width="47.0" height="15.0" fill="rgb(115,115,222)" rx="2" ry="2" />
+<text  x="113.63" y="95.5" >sche..</text>
+</g>
+<g >
+<title>hrtimer_nanosleep_restart (640,098 samples, 0.35%)</title><rect x="1068.6" y="133" width="4.1" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="1071.56" y="143.5" ></text>
+</g>
+<g >
+<title>clock_nanosleep (2,046,324 samples, 1.13%)</title><rect x="559.4" y="261" width="13.3" height="15.0" fill="rgb(111,111,218)" rx="2" ry="2" />
+<text  x="562.40" y="271.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (17,832,424 samples, 9.81%)</title><rect x="952.8" y="245" width="115.8" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="955.76" y="255.5" >entry_SYSCALL_..</text>
+</g>
+<g >
+<title>clock_nanosleep (17,832,424 samples, 9.81%)</title><rect x="952.8" y="261" width="115.8" height="15.0" fill="rgb(111,111,218)" rx="2" ry="2" />
+<text  x="955.76" y="271.5" >clock_nanosleep</text>
+</g>
+<g >
+<title>hrtimer_nanosleep (19,927,942 samples, 10.97%)</title><rect x="314.1" y="165" width="129.4" height="15.0" fill="rgb(118,118,225)" rx="2" ry="2" />
+<text  x="317.11" y="175.5" >hrtimer_nanosleep</text>
+</g>
+<g >
+<title>wait_for_completion_io (7,013,470 samples, 3.86%)</title><rect x="218.0" y="149" width="45.5" height="15.0" fill="rgb(136,136,241)" rx="2" ry="2" />
+<text  x="220.95" y="159.5" >wait..</text>
+</g>
+<g >
+<title>_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17h938c2a763a843a1aE (19,954,738 samples, 10.98%)</title><rect x="572.7" y="325" width="129.6" height="15.0" fill="rgb(133,133,239)" rx="2" ry="2" />
+<text  x="575.68" y="335.5" >_ZN4core3ops8fun..</text>
+</g>
+<g >
+<title>clock_nanosleep (15,496,748 samples, 8.53%)</title><rect x="10.0" y="261" width="100.6" height="15.0" fill="rgb(111,111,218)" rx="2" ry="2" />
+<text  x="13.00" y="271.5" >clock_nanosl..</text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17hf990832c4147adbbE (19,890,396 samples, 10.95%)</title><rect x="443.5" y="309" width="129.2" height="15.0" fill="rgb(93,93,202)" rx="2" ry="2" />
+<text  x="446.52" y="319.5" >_ZN3std3sys9back..</text>
+</g>
+<g >
+<title>_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17hc5430f1314baea72E (19,938,426 samples, 10.97%)</title><rect x="702.3" y="325" width="129.4" height="15.0" fill="rgb(102,102,210)" rx="2" ry="2" />
+<text  x="705.27" y="335.5" >_ZN4core3ops8fun..</text>
+</g>
+<g >
+<title>folio_wait_bit_common (16,069,098 samples, 8.84%)</title><rect x="831.8" y="149" width="104.3" height="15.0" fill="rgb(106,106,214)" rx="2" ry="2" />
+<text  x="834.76" y="159.5" >folio_wait_b..</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (5,421,906 samples, 2.98%)</title><rect x="157.6" y="85" width="35.2" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="160.63" y="95.5" >fi..</text>
+</g>
+<g >
+<title>io_schedule (3,865,406 samples, 2.13%)</title><rect x="192.8" y="85" width="25.1" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="195.84" y="95.5" >i..</text>
+</g>
+<g >
+<title>__x64_sys_clock_nanosleep (19,927,942 samples, 10.97%)</title><rect x="314.1" y="197" width="129.4" height="15.0" fill="rgb(132,132,238)" rx="2" ry="2" />
+<text  x="317.11" y="207.5" >__x64_sys_clock_..</text>
+</g>
+<g >
+<title>_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17h35345ed8eacd136dE (19,927,942 samples, 10.97%)</title><rect x="314.1" y="325" width="129.4" height="15.0" fill="rgb(86,86,195)" rx="2" ry="2" />
+<text  x="317.11" y="335.5" >_ZN4core3ops8fun..</text>
+</g>
+<g >
+<title>folio_wait_bit_common (3,865,406 samples, 2.13%)</title><rect x="192.8" y="101" width="25.1" height="15.0" fill="rgb(106,106,214)" rx="2" ry="2" />
+<text  x="195.84" y="111.5" >f..</text>
+</g>
+<g >
+<title>__do_fault (16,069,098 samples, 8.84%)</title><rect x="831.8" y="181" width="104.3" height="15.0" fill="rgb(99,99,207)" rx="2" ry="2" />
+<text  x="834.76" y="191.5" >__do_fault</text>
+</g>
+<g >
+<title>folio_wait_bit (7,794,748 samples, 4.29%)</title><rect x="263.5" y="133" width="50.6" height="15.0" fill="rgb(114,114,221)" rx="2" ry="2" />
+<text  x="266.49" y="143.5" >folio..</text>
+</g>
+<g >
+<title>schedule_timeout (7,013,470 samples, 3.86%)</title><rect x="218.0" y="101" width="45.5" height="15.0" fill="rgb(115,115,222)" rx="2" ry="2" />
+<text  x="220.95" y="111.5" >sche..</text>
+</g>
+<g >
+<title>__x64_sys_clock_nanosleep (506,794 samples, 0.28%)</title><rect x="936.1" y="197" width="3.3" height="15.0" fill="rgb(132,132,238)" rx="2" ry="2" />
+<text  x="939.11" y="207.5" ></text>
+</g>
+<g >
+<title>clock_nanosleep (19,938,426 samples, 10.97%)</title><rect x="702.3" y="261" width="129.4" height="15.0" fill="rgb(111,111,218)" rx="2" ry="2" />
+<text  x="705.27" y="271.5" >clock_nanosleep</text>
+</g>
+<g >
+<title>all (181,712,370 samples, 100%)</title><rect x="10.0" y="389" width="1180.0" height="15.0" fill="rgb(90,90,199)" rx="2" ry="2" />
+<text  x="13.00" y="399.5" ></text>
+</g>
+<g >
+<title>hrtimer_nanosleep (2,046,324 samples, 1.13%)</title><rect x="559.4" y="165" width="13.3" height="15.0" fill="rgb(118,118,225)" rx="2" ry="2" />
+<text  x="562.40" y="175.5" ></text>
+</g>
+<g >
+<title>schedule (15,496,748 samples, 8.53%)</title><rect x="10.0" y="133" width="100.6" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="13.00" y="143.5" >schedule</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (19,954,738 samples, 10.98%)</title><rect x="572.7" y="261" width="129.6" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="575.68" y="271.5" >entry_SYSCALL_64..</text>
+</g>
+<g >
+<title>nanosleep (15,496,748 samples, 8.53%)</title><rect x="10.0" y="277" width="100.6" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="13.00" y="287.5" >nanosleep</text>
+</g>
+<g >
+<title>do_futex (19,954,738 samples, 10.98%)</title><rect x="572.7" y="197" width="129.6" height="15.0" fill="rgb(128,128,234)" rx="2" ry="2" />
+<text  x="575.68" y="207.5" >do_futex</text>
+</g>
+<g >
+<title>__schedule (7,794,748 samples, 4.29%)</title><rect x="263.5" y="69" width="50.6" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="266.49" y="79.5" >__sch..</text>
+</g>
+<g >
+<title>do_nanosleep (15,496,748 samples, 8.53%)</title><rect x="10.0" y="149" width="100.6" height="15.0" fill="rgb(137,137,242)" rx="2" ry="2" />
+<text  x="13.00" y="159.5" >do_nanosleep</text>
+</g>
+<g >
+<title>__x64_sys_clock_nanosleep (2,046,324 samples, 1.13%)</title><rect x="559.4" y="197" width="13.3" height="15.0" fill="rgb(132,132,238)" rx="2" ry="2" />
+<text  x="562.40" y="207.5" ></text>
+</g>
+<g >
+<title>clock_nanosleep (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="213" width="121.4" height="15.0" fill="rgb(111,111,218)" rx="2" ry="2" />
+<text  x="1071.56" y="223.5" >clock_nanosleep</text>
+</g>
+<g >
+<title>x64_sys_call (2,048,484 samples, 1.13%)</title><rect x="939.5" y="213" width="13.3" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="942.46" y="223.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (16,524,294 samples, 9.09%)</title><rect x="110.6" y="261" width="107.3" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="113.63" y="271.5" >entry_SYSCALL..</text>
+</g>
+<g >
+<title>do_nanosleep (2,046,324 samples, 1.13%)</title><rect x="559.4" y="149" width="13.3" height="15.0" fill="rgb(137,137,242)" rx="2" ry="2" />
+<text  x="562.40" y="159.5" ></text>
+</g>
+<g >
+<title>exc_page_fault (16,069,098 samples, 8.84%)</title><rect x="831.8" y="261" width="104.3" height="15.0" fill="rgb(89,89,198)" rx="2" ry="2" />
+<text  x="834.76" y="271.5" >exc_page_fault</text>
+</g>
+<g >
+<title>do_nanosleep (506,794 samples, 0.28%)</title><rect x="936.1" y="149" width="3.3" height="15.0" fill="rgb(137,137,242)" rx="2" ry="2" />
+<text  x="939.11" y="159.5" ></text>
+</g>
+<g >
+<title>folio_wait_bit_common (7,794,748 samples, 4.29%)</title><rect x="263.5" y="117" width="50.6" height="15.0" fill="rgb(106,106,214)" rx="2" ry="2" />
+<text  x="266.49" y="127.5" >folio..</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (19,927,942 samples, 10.97%)</title><rect x="314.1" y="245" width="129.4" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="317.11" y="255.5" >entry_SYSCALL_64..</text>
+</g>
+<g >
+<title>__x64_sys_clock_nanosleep (19,938,426 samples, 10.97%)</title><rect x="702.3" y="197" width="129.4" height="15.0" fill="rgb(132,132,238)" rx="2" ry="2" />
+<text  x="705.27" y="207.5" >__x64_sys_clock_..</text>
+</g>
+<g >
+<title>schedule (506,794 samples, 0.28%)</title><rect x="936.1" y="133" width="3.3" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="939.11" y="143.5" ></text>
+</g>
+<g >
+<title>wait_for_completion_io (7,236,982 samples, 3.98%)</title><rect x="110.6" y="133" width="47.0" height="15.0" fill="rgb(136,136,241)" rx="2" ry="2" />
+<text  x="113.63" y="143.5" >wait..</text>
+</g>
+<g >
+<title>nanosleep (506,794 samples, 0.28%)</title><rect x="936.1" y="277" width="3.3" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="939.11" y="287.5" ></text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17h003caae836caa771E (19,927,942 samples, 10.97%)</title><rect x="314.1" y="309" width="129.4" height="15.0" fill="rgb(137,137,243)" rx="2" ry="2" />
+<text  x="317.11" y="319.5" >_ZN3std3sys9back..</text>
+</g>
+<g >
+<title>do_nanosleep (19,927,942 samples, 10.97%)</title><rect x="314.1" y="149" width="129.4" height="15.0" fill="rgb(137,137,242)" rx="2" ry="2" />
+<text  x="317.11" y="159.5" >do_nanosleep</text>
+</g>
+<g >
+<title>do_syscall_64 (15,496,748 samples, 8.53%)</title><rect x="10.0" y="229" width="100.6" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="13.00" y="239.5" >do_syscall_64</text>
+</g>
+<g >
+<title>fsync (16,524,294 samples, 9.09%)</title><rect x="110.6" y="277" width="107.3" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="113.63" y="287.5" >fsync</text>
+</g>
+<g >
+<title>syscall (17,844,008 samples, 9.82%)</title><rect x="443.5" y="261" width="115.9" height="15.0" fill="rgb(115,115,222)" rx="2" ry="2" />
+<text  x="446.52" y="271.5" >syscall</text>
+</g>
+<g >
+<title>__schedule (19,954,738 samples, 10.98%)</title><rect x="572.7" y="133" width="129.6" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="575.68" y="143.5" >__schedule</text>
+</g>
+<g >
+<title>schedule (7,013,470 samples, 3.86%)</title><rect x="218.0" y="85" width="45.5" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="220.95" y="95.5" >sche..</text>
+</g>
+<g >
+<title>__x64_sys_futex (19,954,738 samples, 10.98%)</title><rect x="572.7" y="213" width="129.6" height="15.0" fill="rgb(121,121,228)" rx="2" ry="2" />
+<text  x="575.68" y="223.5" >__x64_sys_futex</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (19,938,426 samples, 10.97%)</title><rect x="702.3" y="245" width="129.4" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="705.27" y="255.5" >entry_SYSCALL_64..</text>
+</g>
+<g >
+<title>schedule (16,069,098 samples, 8.84%)</title><rect x="831.8" y="117" width="104.3" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="834.76" y="127.5" >schedule</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (14,808,218 samples, 8.15%)</title><rect x="218.0" y="261" width="96.1" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="220.95" y="271.5" >entry_SYSCA..</text>
+</g>
+<g >
+<title>do_syscall_64 (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="181" width="121.4" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="1071.56" y="191.5" >do_syscall_64</text>
+</g>
+<g >
+<title>__x64_sys_futex (2,048,484 samples, 1.13%)</title><rect x="939.5" y="197" width="13.3" height="15.0" fill="rgb(121,121,228)" rx="2" ry="2" />
+<text  x="942.46" y="207.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (19,938,426 samples, 10.97%)</title><rect x="702.3" y="229" width="129.4" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="705.27" y="239.5" >do_syscall_64</text>
+</g>
+<g >
+<title>__wait_for_common (7,236,982 samples, 3.98%)</title><rect x="110.6" y="117" width="47.0" height="15.0" fill="rgb(111,111,218)" rx="2" ry="2" />
+<text  x="113.63" y="127.5" >__wa..</text>
+</g>
+<g >
+<title>common_nsleep (15,496,748 samples, 8.53%)</title><rect x="10.0" y="181" width="100.6" height="15.0" fill="rgb(107,107,215)" rx="2" ry="2" />
+<text  x="13.00" y="191.5" >common_nsleep</text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17h72385c5c0cf65345E (16,524,452 samples, 9.09%)</title><rect x="110.6" y="309" width="107.3" height="15.0" fill="rgb(94,94,203)" rx="2" ry="2" />
+<text  x="113.63" y="319.5" >_ZN3std3sys9b..</text>
+</g>
+<g >
+<title>common_nsleep (19,927,942 samples, 10.97%)</title><rect x="314.1" y="181" width="129.4" height="15.0" fill="rgb(107,107,215)" rx="2" ry="2" />
+<text  x="317.11" y="191.5" >common_nsleep</text>
+</g>
+<g >
+<title>_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17h108415d920608b83E (15,496,788 samples, 8.53%)</title><rect x="10.0" y="325" width="100.6" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="13.00" y="335.5" >_ZN4core3ops..</text>
+</g>
+<g >
+<title>__schedule (2,048,484 samples, 1.13%)</title><rect x="939.5" y="117" width="13.3" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="942.46" y="127.5" ></text>
+</g>
+<g >
+<title>__schedule (5,421,906 samples, 2.98%)</title><rect x="157.6" y="101" width="35.2" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="160.63" y="111.5" >__..</text>
+</g>
+<g >
+<title>do_syscall_64 (14,808,218 samples, 8.15%)</title><rect x="218.0" y="245" width="96.1" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="220.95" y="255.5" >do_syscall_64</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (19,954,738 samples, 10.98%)</title><rect x="572.7" y="117" width="129.6" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="575.68" y="127.5" >finish_task_swit..</text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17ha3d18ebbe091a240E (15,496,788 samples, 8.53%)</title><rect x="10.0" y="309" width="100.6" height="15.0" fill="rgb(93,93,202)" rx="2" ry="2" />
+<text  x="13.00" y="319.5" >_ZN3std3sys9..</text>
+</g>
+<g >
+<title>schedule (17,832,424 samples, 9.81%)</title><rect x="952.8" y="133" width="115.8" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="955.76" y="143.5" >schedule</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (7,794,748 samples, 4.29%)</title><rect x="263.5" y="53" width="50.6" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="266.49" y="63.5" >finis..</text>
+</g>
+<g >
+<title>nanosleep (17,832,424 samples, 9.81%)</title><rect x="952.8" y="277" width="115.8" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="955.76" y="287.5" >nanosleep</text>
+</g>
+<g >
+<title>schedule (7,794,748 samples, 4.29%)</title><rect x="263.5" y="85" width="50.6" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="266.49" y="95.5" >sched..</text>
+</g>
+<g >
+<title>__wait_for_common (7,013,470 samples, 3.86%)</title><rect x="218.0" y="133" width="45.5" height="15.0" fill="rgb(111,111,218)" rx="2" ry="2" />
+<text  x="220.95" y="143.5" >__wa..</text>
+</g>
+<g >
+<title>submit_bio_wait (7,013,470 samples, 3.86%)</title><rect x="218.0" y="165" width="45.5" height="15.0" fill="rgb(99,99,207)" rx="2" ry="2" />
+<text  x="220.95" y="175.5" >subm..</text>
+</g>
+<g >
+<title>_ZN11offcpu_demo12alloc_worker17h680f839c5a1b0151E (15,496,788 samples, 8.53%)</title><rect x="10.0" y="293" width="100.6" height="15.0" fill="rgb(120,120,226)" rx="2" ry="2" />
+<text  x="13.00" y="303.5" >_ZN11offcpu_..</text>
+</g>
+<g >
+<title>futex_wait_queue (19,954,738 samples, 10.98%)</title><rect x="572.7" y="165" width="129.6" height="15.0" fill="rgb(104,104,212)" rx="2" ry="2" />
+<text  x="575.68" y="175.5" >futex_wait_queue</text>
+</g>
+<g >
+<title>pthread_condattr_setpshared (163,011,696 samples, 89.71%)</title><rect x="10.0" y="357" width="1058.6" height="15.0" fill="rgb(86,86,196)" rx="2" ry="2" />
+<text  x="13.00" y="367.5" >pthread_condattr_setpshared</text>
+</g>
+<g >
+<title>do_fault (16,069,098 samples, 8.84%)</title><rect x="831.8" y="197" width="104.3" height="15.0" fill="rgb(132,132,237)" rx="2" ry="2" />
+<text  x="834.76" y="207.5" >do_fault</text>
+</g>
+<g >
+<title>__handle_mm_fault (16,069,098 samples, 8.84%)</title><rect x="831.8" y="213" width="104.3" height="15.0" fill="rgb(82,82,192)" rx="2" ry="2" />
+<text  x="834.76" y="223.5" >__handle_mm_..</text>
+</g>
+<g >
+<title>do_nanosleep (17,832,424 samples, 9.81%)</title><rect x="952.8" y="149" width="115.8" height="15.0" fill="rgb(137,137,242)" rx="2" ry="2" />
+<text  x="955.76" y="159.5" >do_nanosleep</text>
+</g>
+<g >
+<title>_ZN11offcpu_demo12fsync_worker17h7ef0c8191e660421E (16,524,452 samples, 9.09%)</title><rect x="110.6" y="293" width="107.3" height="15.0" fill="rgb(135,135,240)" rx="2" ry="2" />
+<text  x="113.63" y="303.5" >_ZN11offcpu_d..</text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17h6097cdbebce9de6aE (16,585,522 samples, 9.13%)</title><rect x="831.8" y="309" width="107.7" height="15.0" fill="rgb(118,118,225)" rx="2" ry="2" />
+<text  x="834.76" y="319.5" >_ZN3std3sys9b..</text>
+</g>
+<g >
+<title>common_nsleep (2,046,324 samples, 1.13%)</title><rect x="559.4" y="181" width="13.3" height="15.0" fill="rgb(107,107,215)" rx="2" ry="2" />
+<text  x="562.40" y="191.5" ></text>
+</g>
+<g >
+<title>file_write_and_wait_range (7,794,748 samples, 4.29%)</title><rect x="263.5" y="181" width="50.6" height="15.0" fill="rgb(120,120,227)" rx="2" ry="2" />
+<text  x="266.49" y="191.5" >file_..</text>
+</g>
+<g >
+<title>do_syscall_64 (2,048,484 samples, 1.13%)</title><rect x="939.5" y="229" width="13.3" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="942.46" y="239.5" ></text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17h8f35a02bbef8ae94E (19,938,426 samples, 10.97%)</title><rect x="702.3" y="309" width="129.4" height="15.0" fill="rgb(114,114,221)" rx="2" ry="2" />
+<text  x="705.27" y="319.5" >_ZN3std3sys9back..</text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17h8073b624dd03f5a5E (19,954,738 samples, 10.98%)</title><rect x="572.7" y="309" width="129.6" height="15.0" fill="rgb(84,84,194)" rx="2" ry="2" />
+<text  x="575.68" y="319.5" >_ZN3std3sys9back..</text>
+</g>
+<g >
+<title>_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17h1e0a969dd33e4dccE (14,810,252 samples, 8.15%)</title><rect x="217.9" y="325" width="96.2" height="15.0" fill="rgb(133,133,239)" rx="2" ry="2" />
+<text  x="220.94" y="335.5" >_ZN4core3op..</text>
+</g>
+<g >
+<title>futex_wait (2,048,484 samples, 1.13%)</title><rect x="939.5" y="165" width="13.3" height="15.0" fill="rgb(116,116,223)" rx="2" ry="2" />
+<text  x="942.46" y="175.5" ></text>
+</g>
+<g >
+<title>__xmknodat (163,011,696 samples, 89.71%)</title><rect x="10.0" y="373" width="1058.6" height="15.0" fill="rgb(93,93,202)" rx="2" ry="2" />
+<text  x="13.00" y="383.5" >__xmknodat</text>
+</g>
+<g >
+<title>nanosleep (19,938,426 samples, 10.97%)</title><rect x="702.3" y="277" width="129.4" height="15.0" fill="rgb(109,109,217)" rx="2" ry="2" />
+<text  x="705.27" y="287.5" >nanosleep</text>
+</g>
+<g >
+<title>schedule (19,938,426 samples, 10.97%)</title><rect x="702.3" y="133" width="129.4" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="705.27" y="143.5" >schedule</text>
+</g>
+<g >
+<title>io_schedule_timeout (7,013,470 samples, 3.86%)</title><rect x="218.0" y="117" width="45.5" height="15.0" fill="rgb(104,104,212)" rx="2" ry="2" />
+<text  x="220.95" y="127.5" >io_s..</text>
+</g>
+<g >
+<title>common_nsleep (17,832,424 samples, 9.81%)</title><rect x="952.8" y="181" width="115.8" height="15.0" fill="rgb(107,107,215)" rx="2" ry="2" />
+<text  x="955.76" y="191.5" >common_nsleep</text>
+</g>
+<g >
+<title>__x64_sys_clock_nanosleep (15,496,748 samples, 8.53%)</title><rect x="10.0" y="197" width="100.6" height="15.0" fill="rgb(132,132,238)" rx="2" ry="2" />
+<text  x="13.00" y="207.5" >__x64_sys_cl..</text>
+</g>
+<g >
+<title>x64_sys_call (17,832,424 samples, 9.81%)</title><rect x="952.8" y="213" width="115.8" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="955.76" y="223.5" >x64_sys_call</text>
+</g>
+<g >
+<title>__schedule (16,069,098 samples, 8.84%)</title><rect x="831.8" y="101" width="104.3" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="834.76" y="111.5" >__schedule</text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (19,938,426 samples, 10.97%)</title><rect x="702.3" y="101" width="129.4" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="705.27" y="111.5" >finish_task_swit..</text>
+</g>
+<g >
+<title>_ZN11offcpu_demo11lock_worker17h82c9fc13dcc22e40E (19,890,396 samples, 10.95%)</title><rect x="443.5" y="293" width="129.2" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="446.52" y="303.5" >_ZN11offcpu_demo..</text>
+</g>
+<g >
+<title>jbd2_complete_transaction (5,421,906 samples, 2.98%)</title><rect x="157.6" y="149" width="35.2" height="15.0" fill="rgb(105,105,213)" rx="2" ry="2" />
+<text  x="160.63" y="159.5" >jb..</text>
+</g>
+<g >
+<title>futex_wait (19,954,738 samples, 10.98%)</title><rect x="572.7" y="181" width="129.6" height="15.0" fill="rgb(116,116,223)" rx="2" ry="2" />
+<text  x="575.68" y="191.5" >futex_wait</text>
+</g>
+<g >
+<title>common_nsleep (506,794 samples, 0.28%)</title><rect x="936.1" y="181" width="3.3" height="15.0" fill="rgb(107,107,215)" rx="2" ry="2" />
+<text  x="939.11" y="191.5" ></text>
+</g>
+<g >
+<title>ext4_sync_file (16,524,294 samples, 9.09%)</title><rect x="110.6" y="181" width="107.3" height="15.0" fill="rgb(87,87,196)" rx="2" ry="2" />
+<text  x="113.63" y="191.5" >ext4_sync_file</text>
+</g>
+<g >
+<title>do_user_addr_fault (16,069,098 samples, 8.84%)</title><rect x="831.8" y="245" width="104.3" height="15.0" fill="rgb(108,108,215)" rx="2" ry="2" />
+<text  x="834.76" y="255.5" >do_user_addr..</text>
+</g>
+<g >
+<title>x64_sys_call (19,954,738 samples, 10.98%)</title><rect x="572.7" y="229" width="129.6" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="575.68" y="239.5" >x64_sys_call</text>
+</g>
+<g >
+<title>folio_wait_writeback (3,865,406 samples, 2.13%)</title><rect x="192.8" y="133" width="25.1" height="15.0" fill="rgb(96,96,204)" rx="2" ry="2" />
+<text  x="195.84" y="143.5" >f..</text>
+</g>
+<g >
+<title>__schedule (7,013,470 samples, 3.86%)</title><rect x="218.0" y="69" width="45.5" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="220.95" y="79.5" >__sc..</text>
+</g>
+<g >
+<title>do_syscall_64 (17,832,424 samples, 9.81%)</title><rect x="952.8" y="229" width="115.8" height="15.0" fill="rgb(85,85,194)" rx="2" ry="2" />
+<text  x="955.76" y="239.5" >do_syscall_64</text>
+</g>
+<g >
+<title>x64_sys_call (14,808,218 samples, 8.15%)</title><rect x="218.0" y="229" width="96.1" height="15.0" fill="rgb(130,130,236)" rx="2" ry="2" />
+<text  x="220.95" y="239.5" >x64_sys_call</text>
+</g>
+<g >
+<title>schedule (640,098 samples, 0.35%)</title><rect x="1068.6" y="101" width="4.1" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="1071.56" y="111.5" ></text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (2,048,484 samples, 1.13%)</title><rect x="939.5" y="101" width="13.3" height="15.0" fill="rgb(129,129,235)" rx="2" ry="2" />
+<text  x="942.46" y="111.5" ></text>
+</g>
+<g >
+<title>_ZN3std2rt19lang_start_internal17h34f9328d113fd60aE (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="309" width="121.4" height="15.0" fill="rgb(91,91,200)" rx="2" ry="2" />
+<text  x="1071.56" y="319.5" >_ZN3std2rt19lan..</text>
+</g>
+<g >
+<title>handle_mm_fault (16,069,098 samples, 8.84%)</title><rect x="831.8" y="229" width="104.3" height="15.0" fill="rgb(115,115,222)" rx="2" ry="2" />
+<text  x="834.76" y="239.5" >handle_mm_fa..</text>
+</g>
+<g >
+<title>folio_wait_writeback (7,794,748 samples, 4.29%)</title><rect x="263.5" y="149" width="50.6" height="15.0" fill="rgb(96,96,204)" rx="2" ry="2" />
+<text  x="266.49" y="159.5" >folio..</text>
+</g>
+<g >
+<title>_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17he8bfbb720f484cc0E (19,880,928 samples, 10.94%)</title><rect x="939.5" y="325" width="129.1" height="15.0" fill="rgb(89,89,198)" rx="2" ry="2" />
+<text  x="942.46" y="335.5" >_ZN4core3ops8fun..</text>
+</g>
+<g >
+<title>blkdev_issue_flush (7,236,982 samples, 3.98%)</title><rect x="110.6" y="165" width="47.0" height="15.0" fill="rgb(138,138,244)" rx="2" ry="2" />
+<text  x="113.63" y="175.5" >blkd..</text>
+</g>
+<g >
+<title>__filemap_fdatawait_range (7,794,748 samples, 4.29%)</title><rect x="263.5" y="165" width="50.6" height="15.0" fill="rgb(128,128,234)" rx="2" ry="2" />
+<text  x="266.49" y="175.5" >__fil..</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="197" width="121.4" height="15.0" fill="rgb(96,96,205)" rx="2" ry="2" />
+<text  x="1071.56" y="207.5" >entry_SYSCALL_6..</text>
+</g>
+<g >
+<title>__schedule (640,098 samples, 0.35%)</title><rect x="1068.6" y="85" width="4.1" height="15.0" fill="rgb(107,107,214)" rx="2" ry="2" />
+<text  x="1071.56" y="95.5" ></text>
+</g>
+<g >
+<title>_ZN4core3ops8function6FnOnce40call_once$u7b$$u7b$vtable.shim$u7d$$u7d$17h14eb83804194d74eE (16,524,452 samples, 9.09%)</title><rect x="110.6" y="325" width="107.3" height="15.0" fill="rgb(83,83,193)" rx="2" ry="2" />
+<text  x="113.63" y="335.5" >_ZN4core3ops8..</text>
+</g>
+<g >
+<title>__libc_init_first (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="341" width="121.4" height="15.0" fill="rgb(107,107,215)" rx="2" ry="2" />
+<text  x="1071.56" y="351.5" >__libc_init_first</text>
+</g>
+<g >
+<title>folio_wait_bit (3,865,406 samples, 2.13%)</title><rect x="192.8" y="117" width="25.1" height="15.0" fill="rgb(114,114,221)" rx="2" ry="2" />
+<text  x="195.84" y="127.5" >f..</text>
+</g>
+<g >
+<title>_ZN3std3sys9backtrace28__rust_begin_short_backtrace17h1607e6345a39cdd8E (18,700,674 samples, 10.29%)</title><rect x="1068.6" y="277" width="121.4" height="15.0" fill="rgb(134,134,240)" rx="2" ry="2" />
+<text  x="1071.56" y="287.5" >_ZN3std3sys9bac..</text>
+</g>
+<g >
+<title>hrtimer_nanosleep (506,794 samples, 0.28%)</title><rect x="936.1" y="165" width="3.3" height="15.0" fill="rgb(118,118,225)" rx="2" ry="2" />
+<text  x="939.11" y="175.5" ></text>
+</g>
+<g >
+<title>_ZN11offcpu_demo14condvar_waiter17h1336ca3ebceeb90fE (19,954,738 samples, 10.98%)</title><rect x="572.7" y="293" width="129.6" height="15.0" fill="rgb(96,96,204)" rx="2" ry="2" />
+<text  x="575.68" y="303.5" >_ZN11offcpu_demo..</text>
+</g>
+<g >
+<title>schedule (18,060,576 samples, 9.94%)</title><rect x="1072.7" y="85" width="117.3" height="15.0" fill="rgb(139,139,244)" rx="2" ry="2" />
+<text  x="1075.72" y="95.5" >schedule</text>
+</g>
+</g>
+</svg>

@@ -3,6 +3,7 @@
 
 *.json
 *.txt
+!perf/samples/stap/trace-summary.stap.txt
 kv-db/bench_pebble_*/*
 mycrypto/target/*
 perf/target/*
