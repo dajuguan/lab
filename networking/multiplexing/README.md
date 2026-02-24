@@ -8,3 +8,7 @@ Example: 模拟http的req/resp串行处理模式: `client.py server.py`
 - HTTP/2 frame + stream-id、Yamux frame + stream-id、QUIC stream则在同一个TCP连接/QUIC链接中同时处理多个链接请求
 - 核心原理: 每一个stream都有唯一的ID，数据按stream交错传递，parser根据stream-id分发到对应的请求
     - 但是每一个stream内部还是按字节流传输的，因此单个stream内部的req/resp还是只能串行处理
+
+
+## References
+- [gossipsub by Dimitris Vyzovitis@vyzo](https://github.com/vyzo/gerbil-simsub)
