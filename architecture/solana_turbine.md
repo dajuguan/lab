@@ -370,7 +370,19 @@ pub(crate) fn try_send(
 
 1. 生成位置（编码发生在哪里）
 - 语义上是先聚齐一个 FEC set 的 data shreds（例如 32 份），leader 在本地完成 Reed-Solomon 编码得到 data+coding（例如 64 份）后，才进入 Turbine 逐 shred 传播。
-- Turbine 侧入口：`StandardBroadcastRun::entries_to_shreds`（`turbine/src/broadcast_stage/standard_broadcast_run.rs`）。
+- Turbine 侧入口：`StandardBroadcastRun::entries_to_shreds`（`turbine/src/broadcast_stage/standard_broadcast_run.rs`）
+```rust
+let shreds = self
+.entries_to_shreds(
+    keypair,
+    &entries,
+    reference_tick as u8,
+    is_last_in_slot,
+    process_stats,
+    MAX_DATA_SHREDS_PER_SLOT as u32,
+    MAX_CODE_SHREDS_PER_SLOT as u32,
+)
+```
 - 继续调用：`Shredder::make_merkle_shreds_from_entries` -> `make_shreds_from_data_slice`（`ledger/src/shredder.rs`）。
 - 真正 Reed-Solomon 编码：`shred::merkle::finish_erasure_batch` 中
   `reed_solomon_cache.get(...).encode(...)`（`ledger/src/shred/merkle.rs`）。
@@ -421,7 +433,62 @@ pub(crate) fn try_send(
 4. `BroadcastRun::run` 在 slot 中断
 - 语义：收敛旧 slot，并在新 slot 视图下继续生成/发送。
 
-## 7. 小结
+## 7. 两层 Routing 设计（先 route 再分流）
+
+1. 第一层：业务路由（逻辑 fan-out）
+- 在 `standard_broadcast_run::process_receive_results` 中，同一批 `shreds` 被封装为 `Arc<Vec<Shred>>` 后同时发送到两个消费者：
+  - `socket_sender`：进入网络发送路径。
+  - `blockstore_sender`：进入落盘路径。
+- 语义：一次 shred 生产，对应两个并行处理分支；这是职责拆分，不是重复生产。
+
+2. 第二层：传输分流（物理 routing）
+- 在 `broadcast_stage::new` 中，先建立发送线程/通道拓扑，再按 socket interface 组织 worker。
+- 注释“Spawn `num_broadcast_sockets_per_interface` threads; each thread gets a socket from each interface”对应的是多网卡场景下的并行发送分流。
+- 语义：把第一层送来的发送任务映射到具体网络资源（NIC/socket/thread），提升吞吐并贴近硬件拓扑。
+
+3. 组合关系：先 route，再分流
+- 先做“功能路由”：决定同一批 shreds 需要被哪些 handler 消费（发送/落盘）。
+- 再做“资源路由”：把发送分支中的任务按 interface/socket 进一步分流。
+- 结果：既保证功能解耦（I/O 与持久化并行），又保证网络并行度（多接口/多线程发送）。
+
+4. 与 Lighthouse 队列分级的类比
+- 共同点：都采用“先分类，再调度”的两段式结构。
+- 差异点：Lighthouse 的 high/low priority 更偏任务优先级治理；Turbine 这一层更偏网络发送资源治理。
+
+5. 函数/线程/channel 级数据流图
+
+```text
+[BroadcastStage::new_broadcast_stage]
+  └─ 构造 StandardBroadcastRun + 线程与通道
+
+(线程 A) run-loop: BroadcastRun::run
+  Receiver<WorkingBankEntry>
+      -> process_receive_results(...)
+      -> entries_to_shreds(...)
+      -> Arc<Vec<Shred>>
+      -> channel fan-out:
+           1) socket_sender.send((shreds.clone(), batch_info.clone()))
+           2) blockstore_sender.send((shreds, batch_info))
+
+(线程组 B) transmit-loop: BroadcastRun::transmit  [N = num_broadcast_sockets_per_interface]
+  Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>
+      -> broadcast_shreds(...)
+      -> ClusterNodesCache<BroadcastStage>::get(...)
+      -> get_broadcast_peer(...)
+      -> socket/interface 选择
+      -> UDP/XDP send
+
+(线程 C) record-loop: BroadcastRun::record
+  Receiver<(Arc<Vec<Shred>>, Option<BroadcastShredBatchInfo>)>
+      -> Blockstore::insert_shreds(...)/slot 元数据更新
+```
+
+6. 两层 routing 在图中的对应关系
+- Route（业务层）：`run -> process_receive_results -> socket_sender/blockstore_sender`。
+- 分流（资源层）：`transmit` 线程组按 `num_broadcast_sockets_per_interface` 与 interface/socket 并行发送。
+- 这两层组合后，形成“生产一次，双消费者并行 + 发送侧多网卡并行”的执行模型。
+
+## 小结
 
 Turbine 的关键不是“函数多”，而是“接口契约清晰且可编排”：
 1. 广播接口负责 data/coding 生成与双通道分发。
