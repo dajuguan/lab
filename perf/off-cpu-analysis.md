@@ -119,3 +119,4 @@ if start[next_pid] 存在:
 ## References
 - [结合 On-CPU 和 Off-CPU 分析的挂钟时间分析](https://eunomia.dev/zh/tutorials/32-wallclock-profiler/)
 - [Brendan Gregg 的 "Off-CPU Analysis](http://www.brendangregg.com/offcpuanalysis.html)
+- [Tidb flamegraph explaination](https://pingkai.cn/tidbcommunity/blog/6435ce44)
