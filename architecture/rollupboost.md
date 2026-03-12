@@ -30,7 +30,7 @@
 - 结论：真实需求不是“能转发消息”，而是“网络抖动、乱序输入、慢消费者存在时仍维持局部正确并快速恢复”。
 
 ## 0.2 子系统如何正交分解（核心纵向 + 外围横向）
-- 纵向主链（核心闭环）：
+- 纵向主链（核心闭环）：Builder -> rollup-boost -> (可选 websocket-proxy) -> flashblocks-rpc
   1. `Flashblocks::run(builder_url: RpcClient, flashblocks_url: Url, outbound_addr: SocketAddr, websocket_config: FlashblocksWebsocketConfig) -> eyre::Result<FlashblocksService>`
   2. 建立 `mpsc::channel(100)` 作为主链消息通道。
   3. 输入接入：`FlashblocksReceiverService::new(url, sender, websocket_config)`。
