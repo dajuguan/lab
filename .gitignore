@@ -8,3 +8,7 @@ kv-db/bench_pebble_*/*
 mycrypto/target/*
 perf/target/*
 perf/out/*
+
+
+## quint
+security/formal-spec/_apalache-out
