@@ -12,3 +12,6 @@ perf/out/*
 
 ## quint
 security/formal-spec/_apalache-out
+
+## TEE
+eth/notes/tee/target
