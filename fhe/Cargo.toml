@@ -1,0 +1,8 @@
+[package]
+name = "fhe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91.1"
+
+[dependencies]
+tfhe = { version = "*", features = ["boolean", "shortint", "integer"] }
